@@ -1,0 +1,91 @@
+name: 打包并直接分享快手账号管理工具
+
+on:
+  workflow_dispatch: # 仅允许手动触发
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: 设置Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+          python -m playwright install
+
+      - name: 打包应用程序
+        run: |
+          python package.py
+
+      - name: 创建ZIP压缩包
+        run: |
+          echo "创建ZIP压缩包..."
+          Compress-Archive -Path dist/* -DestinationPath 快手账号管理工具.zip
+
+      # 使用文件托管服务上传文件
+      - name: 安装curl和jq
+        run: |
+          choco install curl -y
+          choco install jq -y
+
+      # 使用file.io上传文件（不需要账号）
+      - name: 上传到file.io
+        id: fileio
+        run: |
+          echo "正在上传到file.io..."
+          $response = curl -F "file=@快手账号管理工具.zip" https://file.io | ConvertFrom-Json
+          echo "FILEIO_URL=$($response.link)" >> $env:GITHUB_ENV
+          echo "file.io下载链接: $($response.link)"
+
+      # 使用WeTransfer上传文件（不需要账号）
+      - name: 安装wetransfer-cli
+        run: |
+          npm install -g wetransfer-cli
+
+      - name: 上传到WeTransfer
+        id: wetransfer
+        run: |
+          echo "正在上传到WeTransfer..."
+          $output = wetransfer upload 快手账号管理工具.zip
+          $url = $output -match "https://we.tl/.*" | Out-String
+          $url = $url.Trim()
+          echo "WETRANSFER_URL=$url" >> $env:GITHUB_ENV
+          echo "WeTransfer下载链接: $url"
+
+      # 使用Gofile上传文件（不需要账号）
+      - name: 上传到Gofile
+        id: gofile
+        run: |
+          echo "正在上传到Gofile..."
+          # 获取服务器
+          $server = curl -s https://api.gofile.io/getServer | ConvertFrom-Json
+          $serverName = $server.data.server
+
+          # 上传文件
+          $response = curl -F "file=@快手账号管理工具.zip" https://$serverName.gofile.io/uploadFile | ConvertFrom-Json
+          echo "GOFILE_URL=$($response.data.downloadPage)" >> $env:GITHUB_ENV
+          echo "Gofile下载链接: $($response.data.downloadPage)"
+
+      - name: 显示所有下载链接
+        run: |
+          echo "打包完成！您可以通过以下任一链接下载构建结果:"
+          echo ""
+          echo "1. file.io链接 (一次性下载):"
+          echo "${{ env.FILEIO_URL }}"
+          echo ""
+          echo "2. WeTransfer链接 (有效期7天):"
+          echo "${{ env.WETRANSFER_URL }}"
+          echo ""
+          echo "3. Gofile链接:"
+          echo "${{ env.GOFILE_URL }}"
+          echo ""
+          echo "请尽快保存这些链接，并下载文件！"

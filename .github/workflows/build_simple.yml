@@ -1,0 +1,71 @@
+name: 极简打包工作流
+
+on:
+  workflow_dispatch: # 仅允许手动触发
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v3
+
+      - name: 设置Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller requests
+          pip install playwright
+          python -m playwright install
+
+      - name: 打包应用程序
+        run: |
+          # 简化打包过程，避免使用复杂的package.py
+          pyinstaller --onedir --name "快手账号管理工具" main.py
+
+      - name: 创建启动批处理文件
+        run: |
+          echo '@echo off' > dist/快手账号管理工具/启动.bat
+          echo 'cd /d "%~dp0"' >> dist/快手账号管理工具/启动.bat
+          echo '快手账号管理工具.exe' >> dist/快手账号管理工具/启动.bat
+          echo 'pause' >> dist/快手账号管理工具/启动.bat
+
+      - name: 创建ZIP压缩包
+        run: |
+          Compress-Archive -Path dist/快手账号管理工具/* -DestinationPath 快手账号管理工具.zip
+
+      - name: 显示文件信息
+        run: |
+          echo "打包完成！"
+          echo "============================================"
+          echo "文件信息:"
+          echo "--------------------------------------------"
+          echo "ZIP文件大小:"
+          dir 快手账号管理工具.zip | Select-Object Length,Name | Format-Table
+          echo "--------------------------------------------"
+          echo "ZIP文件内容:"
+          Get-ChildItem -Path dist/快手账号管理工具 -Recurse | Select-Object FullName
+          echo "============================================"
+          echo "请通过以下方式获取文件:"
+          echo "1. 使用远程桌面连接到此运行器"
+          echo "2. 文件位置: ${{ github.workspace }}\快手账号管理工具.zip"
+          echo "3. 或通过电子邮件等方式手动传输文件"
+
+      - name: 保持运行器活动
+        run: |
+          echo "运行器将保持活动状态60分钟，请在此期间获取文件..."
+          echo "文件位置: ${{ github.workspace }}\快手账号管理工具.zip"
+          $timeout = 3600  # 60分钟
+          $interval = 60   # 每分钟更新一次
+          $elapsed = 0
+
+          while ($elapsed -lt $timeout) {
+            $remaining = [math]::Ceiling(($timeout - $elapsed) / 60)
+            echo "剩余时间: $remaining 分钟"
+            Start-Sleep -Seconds $interval
+            $elapsed += $interval
+          }
