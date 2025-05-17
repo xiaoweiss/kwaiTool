@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-本地打包脚本 - 在Windows上直接运行，不依赖GitHub Actions
+本地打包脚本 - 在Windows和macOS上直接运行，不依赖GitHub Actions
 """
 
 import os
@@ -30,10 +30,12 @@ def run_command(command):
         print(f"错误输出: {result.stderr}")
     return result.returncode == 0
 
-def check_windows():
-    """检查是否在Windows系统上运行"""
-    if platform.system() != "Windows":
-        print("错误: 此脚本需要在Windows系统上运行!")
+def check_system():
+    """检查系统类型"""
+    system = platform.system()
+    print_step(f"检测到系统类型: {system}")
+    if system not in ["Windows", "Darwin"]:
+        print("错误: 此脚本仅支持Windows和macOS系统!")
         return False
     return True
 
@@ -73,44 +75,67 @@ def build_app():
     if os.path.exists("build"):
         shutil.rmtree("build")
     
+    # 应用程序名称
+    app_name = "快手账号管理工具"
+    
     # 使用PyInstaller打包应用程序
     print("使用PyInstaller打包应用程序...")
-    if not run_command(f"{sys.executable} -m PyInstaller --onedir --name \"快手账号管理工具\" main.py"):
+    if not run_command(f"{sys.executable} -m PyInstaller --onedir --name \"{app_name}\" main.py"):
         print("打包应用程序失败!")
         return False
     
-    # 创建启动批处理文件
-    print("创建启动批处理文件...")
-    with open("dist/快手账号管理工具/启动.bat", "w", encoding="utf-8") as f:
-        f.write('@echo off\n')
-        f.write('cd /d "%~dp0"\n')
-        f.write('echo 正在启动快手账号管理工具...\n')
-        f.write('快手账号管理工具.exe\n')
-        f.write('pause\n')
+    # 根据系统类型创建启动文件
+    if platform.system() == "Windows":
+        print("创建Windows启动批处理文件...")
+        with open(f"dist/{app_name}/启动.bat", "w", encoding="utf-8") as f:
+            f.write('@echo off\n')
+            f.write('cd /d "%~dp0"\n')
+            f.write(f'echo 正在启动{app_name}...\n')
+            f.write(f'{app_name}.exe\n')
+            f.write('pause\n')
+    else:  # macOS
+        print("创建macOS启动脚本...")
+        with open(f"dist/{app_name}/启动.sh", "w", encoding="utf-8") as f:
+            f.write('#!/bin/bash\n')
+            f.write('cd "$(dirname "$0")"\n')
+            f.write(f'echo "正在启动{app_name}..."\n')
+            f.write(f'./{app_name}\n')
+        # 设置可执行权限
+        os.chmod(f"dist/{app_name}/启动.sh", 0o755)
     
     # 复制配置文件
     if os.path.exists("curl_config.json"):
         print("复制配置文件...")
-        shutil.copy("curl_config.json", "dist/快手账号管理工具/")
+        shutil.copy("curl_config.json", f"dist/{app_name}/")
     
     # 创建accounts目录
     print("创建accounts目录...")
-    os.makedirs("dist/快手账号管理工具/accounts", exist_ok=True)
+    os.makedirs(f"dist/{app_name}/accounts", exist_ok=True)
     
     # 创建ZIP压缩包
     print("创建ZIP压缩包...")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    zip_filename = f"快手账号管理工具_{timestamp}.zip"
+    zip_filename = f"{app_name}_{timestamp}.zip"
     
     if platform.system() == "Windows":
         # 使用PowerShell的Compress-Archive
-        command = f'powershell -command "Compress-Archive -Path \\"dist/快手账号管理工具/*\\" -DestinationPath \\"{zip_filename}\\""'
+        command = f'powershell -command "Compress-Archive -Path \\"dist/{app_name}/*\\" -DestinationPath \\"{zip_filename}\\""'
         if not run_command(command):
             print("创建ZIP压缩包失败!")
             return False
-    else:
-        # 使用Python的shutil.make_archive
-        shutil.make_archive(f"快手账号管理工具_{timestamp}", 'zip', "dist/快手账号管理工具")
+    else:  # macOS
+        # 切换到dist目录
+        current_dir = os.getcwd()
+        os.chdir(f"dist/{app_name}")
+        
+        # 使用zip命令
+        if not run_command(f"zip -r ../../{zip_filename} ."):
+            os.chdir(current_dir)
+            print("创建ZIP压缩包失败!")
+            return False
+        
+        # 切回原目录
+        os.chdir(current_dir)
     
     print(f"ZIP压缩包已创建: {zip_filename}")
     return True
@@ -138,9 +163,10 @@ def show_file_info():
     print(f"文件路径: {abs_path}")
     
     # 显示dist目录内容
-    print("\ndist/快手账号管理工具 目录内容:")
-    for root, dirs, files in os.walk("dist/快手账号管理工具"):
-        level = root.replace("dist/快手账号管理工具", "").count(os.sep)
+    app_name = "快手账号管理工具"
+    print(f"\ndist/{app_name} 目录内容:")
+    for root, dirs, files in os.walk(f"dist/{app_name}"):
+        level = root.replace(f"dist/{app_name}", "").count(os.sep)
         indent = " " * 4 * level
         print(f"{indent}{os.path.basename(root)}/")
         sub_indent = " " * 4 * (level + 1)
@@ -152,7 +178,7 @@ def main():
     print_header("快手账号管理工具 - 本地打包脚本")
     
     # 检查系统环境
-    if not check_windows():
+    if not check_system():
         return
     
     if not check_python():
