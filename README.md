@@ -16,7 +16,7 @@
 
 ## 使用 GitHub Actions 自动打包
 
-本仓库配置了 GitHub Actions 工作流，可以自动在 Windows 和 macOS 平台上打包应用程序。
+本仓库配置了 GitHub Actions 工作流，可以自动在 Windows 平台上打包应用程序。
 
 ### 如何使用
 
@@ -29,9 +29,7 @@
 ### 下载打包结果
 
 1. 打开完成的工作流运行记录
-2. 在"Artifacts"部分找到以下文件：
-   - `快手账号管理工具-Windows`：Windows 版本的打包结果
-   - `快手账号管理工具-macOS`：macOS 版本的打包结果
+2. 在"Artifacts"部分找到 `快手账号管理工具-Windows` 文件
 3. 点击文件名下载打包结果（ZIP 格式）
 
 ## 手动打包说明
@@ -66,26 +64,12 @@ python package.py
    playwright install
    ```
 
-### macOS 用户
-
-1. 解压下载的 ZIP 文件
-2. 在终端中运行：
-   ```
-   ./快手账号管理工具
-   ```
-3. 首次运行前，请确保已安装 Playwright 浏览器：
-   ```
-   playwright install
-   ```
-4. 如果遇到 IMK 警告，请使用提供的`mac_fix.py`启动脚本
-
 ## 注意事项
 
 - 首次运行前，请确保已安装 Playwright 浏览器
 - 如果程序无法自动找到 Chrome 浏览器，请手动选择其安装目录
 - 验证码输入框会自动检测 6 位数字，输入完成后会自动继续
 - 程序会记录已处理的账号，可以通过界面上的"清除已处理记录"按钮清除记录
-- **macOS 用户**：如果遇到输入法或 IMK 相关警告，请使用`mac_fix.py`启动脚本
 
 ## 配置说明
 

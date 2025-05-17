@@ -263,9 +263,15 @@ exe = EXE(
             print("\n可执行文件位于: dist/快手账号管理工具.exe")
             
             # 创建启动批处理文件
-            with open("dist/启动快手账号管理工具.bat", "w", encoding="utf-8") as f:
-                f.write('@echo off\necho 正在启动快手账号管理工具...\ncd /d "%~dp0"\n快手账号管理工具.exe\npause')
-            print("✓ 已创建启动批处理文件: dist/启动快手账号管理工具.bat")
+            if os.path.exists("windows_launcher.bat"):
+                # 复制现有的启动批处理文件
+                shutil.copy("windows_launcher.bat", "dist/启动快手账号管理工具.bat")
+                print("✓ 已复制启动批处理文件: dist/启动快手账号管理工具.bat")
+            else:
+                # 创建默认的启动批处理文件
+                with open("dist/启动快手账号管理工具.bat", "w", encoding="utf-8") as f:
+                    f.write('@echo off\necho 正在启动快手账号管理工具...\ncd /d "%~dp0"\n快手账号管理工具.exe\npause')
+                print("✓ 已创建启动批处理文件: dist/启动快手账号管理工具.bat")
         
         # 提醒用户安装Playwright浏览器
         print("\n重要提示：首次运行前，请确保已安装Playwright浏览器")
