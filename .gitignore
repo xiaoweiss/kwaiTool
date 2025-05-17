@@ -1,0 +1,57 @@
+# Python虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# 打包生成的文件
+dist/
+build/
+*.spec
+
+# Python编译缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 开发环境
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+temp/
+tmp/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 配置文件（如果不想共享）
+# config.json
+
+# 账号数据目录（如果包含敏感信息）
+# accounts/
+
+# PyInstaller生成的文件
+*.manifest
+*.spec
+
+# 其他
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*.cover 
