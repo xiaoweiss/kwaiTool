@@ -30,8 +30,23 @@ jobs:
         run: |
           python package.py
 
-      - name: 上传Windows构建结果
-        uses: actions/upload-artifact@v2
+      # 尝试使用v1版本的upload-artifact
+      - name: 上传Windows构建结果 (v1)
+        uses: actions/upload-artifact@v1
         with:
           name: 快手账号管理工具-Windows
           path: dist/
+
+      # 如果上面的步骤失败，创建压缩文件作为备选方案
+      - name: 创建ZIP压缩包 (备选方案)
+        if: ${{ failure() }}
+        run: |
+          echo "创建ZIP压缩包作为备选方案..."
+          Compress-Archive -Path dist/* -DestinationPath 快手账号管理工具.zip
+
+      # 显示构建结果位置
+      - name: 显示构建结果位置
+        run: |
+          echo "打包完成！"
+          echo "构建结果位于: ${{ github.workspace }}\dist"
+          echo "如果无法通过Artifacts下载，请查看工作流日志获取更多信息。"

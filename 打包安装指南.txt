@@ -53,11 +53,30 @@
 
 ## GitHub Actions自动打包
 
+本项目提供了三种不同的GitHub Actions工作流，用于自动打包应用程序：
+
+### 工作流1: 标准方式（build.yml）
+- 使用GitHub的artifact功能上传构建结果
+- 工作流完成后，可以从Artifacts部分下载构建结果
+- 如果出现"Missing download info"错误，请尝试其他工作流
+
+### 工作流2: 备选方案（build_alternative.yml）
+- 不使用artifact上传，而是保持运行器活动
+- 工作流运行时，会保持运行器活动30分钟
+- 您可以通过远程桌面或其他方式连接到运行器获取文件
+- 文件位置: `<workspace>\快手账号管理工具.zip` 或 `<workspace>\dist` 目录
+
+### 工作流3: 分享链接（build_transfer.yml）
+- 使用Transfer.sh服务上传和分享构建结果
+- 工作流完成后，查看日志获取下载链接
+- 链接有效期为5天，最多可下载10次
+
+### 使用步骤
 1. 将代码推送到GitHub仓库
 2. 在GitHub仓库页面，点击"Actions"选项卡
-3. 找到"打包快手账号管理工具"工作流
+3. 选择一个工作流
 4. 点击"Run workflow"按钮手动触发打包
-5. 等待打包完成后，下载构建结果
+5. 根据选择的工作流，按照不同方式获取构建结果
 
 ## 技术支持
 
