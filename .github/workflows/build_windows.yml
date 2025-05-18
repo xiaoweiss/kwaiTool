@@ -51,7 +51,22 @@ jobs:
 
       - name: 构建应用
         run: |
-          pyinstaller kwai_tool.spec
+          echo "检查当前目录内容..."
+          dir
+          echo "检查kwai_tool.spec文件是否存在..."
+          if (Test-Path -Path "kwai_tool.spec") { 
+            echo "kwai_tool.spec 文件存在"
+            echo "文件内容前10行:"
+            Get-Content -Path "kwai_tool.spec" -Head 10 
+          } 
+          else { 
+            echo "错误: kwai_tool.spec 文件不存在!" 
+          }
+
+          echo "开始构建应用..."
+          pyinstaller --noconfirm kwai_tool.spec
+
+          echo "构建完成，检查dist目录:"
           dir dist
 
       - name: 打包构建产物
