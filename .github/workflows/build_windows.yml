@@ -63,25 +63,55 @@ jobs:
             exit 1
           }
 
+          # 检查图标文件是否存在
+          $ICON_PARAM = ""
+          if (Test-Path -Path "app_icon.ico") {
+            echo "图标文件存在，将使用app_icon.ico"
+            $ICON_PARAM = "--icon=app_icon.ico"
+          } else {
+            echo "图标文件不存在，将使用默认图标"
+          }
+
+          # 检查数据文件是否存在
+          $DATA_PARAM = ""
+          if (Test-Path -Path "curl_config.json") {
+            echo "配置文件存在，将添加curl_config.json"
+            $DATA_PARAM = "--add-data `"curl_config.json;.`""
+          } else {
+            echo "配置文件不存在，将不添加额外数据文件"
+          }
+
           echo "开始构建应用..."
-          # 直接使用main.py构建应用，添加必要的隐藏导入和数据文件
-          pyinstaller --name "快手账号管理工具" --onefile --windowed --icon=app_icon.ico `
-            --hidden-import selenium.webdriver.common.by `
-            --hidden-import selenium.webdriver.support.ui `
-            --hidden-import selenium.webdriver.support.expected_conditions `
-            --hidden-import selenium.webdriver.chrome.options `
-            --hidden-import selenium.webdriver.common.action_chains `
-            --hidden-import websockets `
-            --hidden-import schedule `
-            --hidden-import tzlocal `
-            --hidden-import pytz `
-            --hidden-import curl_helper `
-            --hidden-import requests `
-            --hidden-import playwright `
-            --hidden-import playwright.sync_api `
-            --hidden-import tkinter.filedialog `
-            --add-data "curl_config.json;." `
-            main.py
+          # 构建基本命令
+          $BUILD_CMD = "pyinstaller --name `"快手账号管理工具`" --onefile --windowed"
+
+          # 添加可选参数
+          if ($ICON_PARAM) {
+            $BUILD_CMD += " $ICON_PARAM"
+          }
+          if ($DATA_PARAM) {
+            $BUILD_CMD += " $DATA_PARAM"
+          }
+
+          # 添加必需的隐藏导入
+          $BUILD_CMD += " --hidden-import selenium.webdriver.common.by"
+          $BUILD_CMD += " --hidden-import selenium.webdriver.support.ui"
+          $BUILD_CMD += " --hidden-import selenium.webdriver.support.expected_conditions"
+          $BUILD_CMD += " --hidden-import selenium.webdriver.chrome.options"
+          $BUILD_CMD += " --hidden-import selenium.webdriver.common.action_chains"
+          $BUILD_CMD += " --hidden-import websockets"
+          $BUILD_CMD += " --hidden-import schedule"
+          $BUILD_CMD += " --hidden-import tzlocal"
+          $BUILD_CMD += " --hidden-import pytz"
+          $BUILD_CMD += " --hidden-import curl_helper"
+          $BUILD_CMD += " --hidden-import requests"
+          $BUILD_CMD += " --hidden-import playwright"
+          $BUILD_CMD += " --hidden-import playwright.sync_api"
+          $BUILD_CMD += " --hidden-import tkinter.filedialog"
+          $BUILD_CMD += " main.py"
+
+          echo "执行构建命令: $BUILD_CMD"
+          Invoke-Expression $BUILD_CMD
 
           echo "构建完成，检查dist目录:"
           dir dist
