@@ -60,7 +60,7 @@ else:
         }
     }
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, indent=2, ensure_ascii=False, f)
+        json.dump(config, f, indent=2, ensure_ascii=False)
 
 class KwaiTool:
     def __init__(self, root):

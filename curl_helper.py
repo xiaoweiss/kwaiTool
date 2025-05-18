@@ -6,6 +6,7 @@ API请求工具 - 处理API请求和响应
 import os
 import json
 import requests
+import time
 from urllib.parse import urljoin
 
 class CurlHelper:
@@ -35,7 +36,7 @@ class CurlHelper:
             }
             
             with open(config_file, "w", encoding="utf-8") as f:
-                json.dump(default_config, indent=2, ensure_ascii=False, f)
+                json.dump(default_config, f, indent=2, ensure_ascii=False)
             
             return default_config
         
@@ -121,12 +122,13 @@ class CurlHelper:
     
     def upload_cookies(self, account, cookies):
         """上传账号Cookie到API"""
+        timestamp = time.time()
         return self.post(
             "account",
             json_data={
                 "account": account,
                 "cookies": cookies,
-                "timestamp": import time; time.time()
+                "timestamp": timestamp
             }
         )
 
