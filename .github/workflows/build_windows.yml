@@ -46,8 +46,8 @@ jobs:
 
       - name: 清理旧构建
         run: |
-          if exist build rmdir /s /q build
-          if exist dist rmdir /s /q dist
+          if (Test-Path -Path "build") { Remove-Item -Path "build" -Recurse -Force }
+          if (Test-Path -Path "dist") { Remove-Item -Path "dist" -Recurse -Force }
 
       - name: 构建应用
         run: |
