@@ -1,11 +1,12 @@
 {
-  "base_url": "https://kwaiTool.zhongle88.cn",
+  "base_url": "https://api.example.com",
   "default_headers": {
     "Content-Type": "application/json",
-    "X-Client": "FacebookAdsManager/1.0"
+    "User-Agent": "KwaiTool/1.0"
   },
   "timeout": 30,
   "endpoints": {
-    "account": "index.php/admin/Dashboard/account"
+    "login": "/login",
+    "account": "/account"
   }
 }

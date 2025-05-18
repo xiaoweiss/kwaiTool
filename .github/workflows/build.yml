@@ -1,19 +1,21 @@
-name: 打包快手账号管理工具
+name: 构建应用程序
 
 on:
   push:
     branches: [main, master]
+    tags:
+      - "v*" # 匹配所有版本标签
   pull_request:
     branches: [main, master]
-  workflow_dispatch: # 允许手动触发工作流
+  workflow_dispatch: # 允许手动触发
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build-macos:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v3
 
-      - name: 设置Python
+      - name: 设置Python环境
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
@@ -22,31 +24,86 @@ jobs:
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
+          pip install pyinstaller requests playwright
           python -m playwright install
 
-      - name: 打包应用程序
+      - name: 构建应用
         run: |
-          python package.py
+          pyinstaller kwai_tool.spec
 
-      # 尝试使用v1版本的upload-artifact
-      - name: 上传Windows构建结果 (v1)
-        uses: actions/upload-artifact@v1
+      - name: 打包构建产物
+        run: |
+          cd dist
+          zip -r 快手账号管理工具-macOS.zip 快手账号管理工具
+          cd ..
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v2
+        with:
+          name: 快手账号管理工具-macOS
+          path: dist/快手账号管理工具-macOS.zip
+          retention-days: 7
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: 设置Python环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller requests playwright
+          python -m playwright install
+
+      - name: 构建应用
+        run: |
+          pyinstaller kwai_tool.spec
+
+      - name: 打包构建产物
+        run: |
+          cd dist
+          powershell Compress-Archive -Path 快手账号管理工具/* -DestinationPath 快手账号管理工具-Windows.zip
+          cd ..
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v2
         with:
           name: 快手账号管理工具-Windows
-          path: dist/
+          path: dist/快手账号管理工具-Windows.zip
+          retention-days: 7
 
-      # 如果上面的步骤失败，创建压缩文件作为备选方案
-      - name: 创建ZIP压缩包 (备选方案)
-        if: ${{ failure() }}
-        run: |
-          echo "创建ZIP压缩包作为备选方案..."
-          Compress-Archive -Path dist/* -DestinationPath 快手账号管理工具.zip
+  # 创建发布版本（仅在打标签时）
+  create-release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: 获取macOS构建产物
+        uses: actions/download-artifact@v2
+        with:
+          name: 快手账号管理工具-macOS
+          path: ./
 
-      # 显示构建结果位置
-      - name: 显示构建结果位置
-        run: |
-          echo "打包完成！"
-          echo "构建结果位于: ${{ github.workspace }}\dist"
-          echo "如果无法通过Artifacts下载，请查看工作流日志获取更多信息。"
+      - name: 获取Windows构建产物
+        uses: actions/download-artifact@v2
+        with:
+          name: 快手账号管理工具-Windows
+          path: ./
+
+      - name: 创建Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            快手账号管理工具-macOS.zip
+            快手账号管理工具-Windows.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

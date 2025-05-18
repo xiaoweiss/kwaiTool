@@ -1,128 +1,137 @@
+#!/usr/bin/env python3
 """
-HTTP请求工具核心功能
-功能：
-1. 获取认证令牌
-2. 上报消费数据
-3. 上报账号信息
+API请求工具 - 处理API请求和响应
 """
 
-import json
 import os
-import sys
+import json
 import requests
-import urllib.parse
+from urllib.parse import urljoin
 
-# 关闭模拟认证模式，使用内置默认配置进行实际请求
-MOCK_AUTH = False
-
-class APIClient:
-    def __init__(self):
-        self.config = {}
-        self.session = requests.Session()
-        # 直接使用内置默认配置，不尝试加载外部配置文件
-        self._use_default_config()
-
-    def _load_config(self, config_file='curl_config.json'):
-        """此方法现在不会被调用"""
-        # 直接使用内置默认配置
-        self._use_default_config()
-        return
-
-    def _use_default_config(self):
-        """使用内置默认配置"""
-        self.config = {
-            "base_url": "https://kwaiTool.zhongle88.cn/",
-            "default_headers": {
-                "Content-Type": "application/json",
-                "X-Client": "FacebookAdsManager/1.0"
-            },
-            "timeout": 30,
-            "endpoints": {
-                "get_auth": "index.php/api/finance.Callback/getAuth",
-                "report_spend": "index.php/api/finance.Callback/index",
-                "account": "index.php/admin/Dashboard/account"  # 添加账号信息上报接口
+class CurlHelper:
+    def __init__(self, config_file="curl_config.json"):
+        """初始化API客户端"""
+        self.config = self.load_config(config_file)
+        self.base_url = self.config.get("base_url", "")
+        self.default_headers = self.config.get("default_headers", {})
+        self.timeout = self.config.get("timeout", 30)
+        self.endpoints = self.config.get("endpoints", {})
+    
+    def load_config(self, config_file):
+        """加载配置文件"""
+        if not os.path.exists(config_file):
+            # 创建默认配置
+            default_config = {
+                "base_url": "https://api.example.com",
+                "default_headers": {
+                    "Content-Type": "application/json",
+                    "User-Agent": "KwaiTool/1.0"
+                },
+                "timeout": 30,
+                "endpoints": {
+                    "login": "/login",
+                    "account": "/account"
+                }
             }
-        }
-        print("直接使用内置默认配置，不尝试加载外部配置")
-        # 检查并修复base_url
-        if 'base_url' in self.config:
-            self.config['base_url'] = self._normalize_base_url(self.config['base_url'])
-
-    def _normalize_base_url(self, url):
-        """标准化处理base_url"""
+            
+            with open(config_file, "w", encoding="utf-8") as f:
+                json.dump(default_config, indent=2, ensure_ascii=False, f)
+            
+            return default_config
+        
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"加载配置文件失败: {e}")
+            return {}
+    
+    def get_endpoint_url(self, endpoint_name):
+        """获取完整的API端点URL"""
+        endpoint = self.endpoints.get(endpoint_name, "")
+        if not endpoint:
+            return None
+        
+        return urljoin(self.base_url, endpoint)
+    
+    def get(self, endpoint_name, params=None, headers=None):
+        """发送GET请求"""
+        url = self.get_endpoint_url(endpoint_name)
         if not url:
-            print("警告: base_url为空")
-            return "https://kwaiTool.zhongle88.cn/"
-            
-        # 确保URL有协议前缀
-        if not url.startswith(('http://', 'https://')):
-            url = f'http://{url}' if any(local in url for local in ['localhost', '192.168', '127.0.0.1']) else f'https://{url}'
+            return {"error": f"未找到端点: {endpoint_name}"}
         
-        # 确保URL以/结尾
-        if not url.endswith('/'):
-            url += '/'
-            
-        return url
-
-    def _build_url(self, endpoint):
-        """构建完整API URL"""
-        base = self.config.get('base_url', '')
-        if not base:
-            print("错误: base_url未配置")
-            # 使用默认值而不是返回空字符串
-            base = "https://kwaiTool.zhongle88.cn/"
-            
-        # 去除endpoint开头的斜杠
-        endpoint = endpoint.lstrip('/')
+        # 合并请求头
+        request_headers = self.default_headers.copy()
+        if headers:
+            request_headers.update(headers)
         
-        # 使用urllib.parse确保URL正确拼接
-        full_url = urllib.parse.urljoin(base, endpoint)
-        
-        print(f"调试: 构建URL: {full_url}")
-        return full_url
-
-    def account(self, data):
-        """上报账号信息"""
-        endpoint = self.config.get('endpoints', {}).get('account', 'index.php/admin/Dashboard/account')
         try:
-            url = self._build_url(endpoint)
-            if not url:
-                raise ValueError("无法构建有效的上报URL")
-                
-            print(f"上报账号信息请求URL: {url}")
-            print(f"上报数据: {json.dumps(data, ensure_ascii=False)}")
-            
-            response = self.session.post(
-                url=url,
-                json=data,
-                headers=self.config.get('default_headers', {}),
-                timeout=self.config.get('timeout', 30)
+            response = requests.get(
+                url,
+                params=params,
+                headers=request_headers,
+                timeout=self.timeout
             )
-            response.raise_for_status()
-            result = response.json()
-            print(f"上报账号信息响应: {json.dumps(result, ensure_ascii=False)}")
-            return result
-        except Exception as e:
-            print(f"上报账号信息失败: {str(e)}")
-            return {"code": -1, "msg": f"请求失败: {str(e)}"}
             
-    def report_spend(self, data):
-        """上报消费数据"""
-        endpoint = self.config.get('endpoints', {}).get('report_spend', 'index.php/api/finance.Callback/index')
+            return self.process_response(response)
+        except Exception as e:
+            return {"error": f"请求失败: {str(e)}"}
+    
+    def post(self, endpoint_name, data=None, json_data=None, headers=None):
+        """发送POST请求"""
+        url = self.get_endpoint_url(endpoint_name)
+        if not url:
+            return {"error": f"未找到端点: {endpoint_name}"}
+        
+        # 合并请求头
+        request_headers = self.default_headers.copy()
+        if headers:
+            request_headers.update(headers)
+        
         try:
-            url = self._build_url(endpoint)
-            if not url:
-                raise ValueError("无法构建有效的上报URL")
-                
-            print(f"上报消费数据请求URL: {url}")
-            response = self.session.post(
-                url=url,
-                json=data,
-                headers=self.config.get('default_headers', {}),
-                timeout=self.config.get('timeout', 30)
+            response = requests.post(
+                url,
+                data=data,
+                json=json_data,
+                headers=request_headers,
+                timeout=self.timeout
             )
-            response.raise_for_status()
-            return response.json()
+            
+            return self.process_response(response)
         except Exception as e:
-            print(f"上报消费数据失败: {str(e)}")
-            return None 
+            return {"error": f"请求失败: {str(e)}"}
+    
+    def process_response(self, response):
+        """处理API响应"""
+        try:
+            # 尝试解析JSON响应
+            json_response = response.json()
+            return {
+                "status_code": response.status_code,
+                "data": json_response,
+                "headers": dict(response.headers)
+            }
+        except ValueError:
+            # 非JSON响应
+            return {
+                "status_code": response.status_code,
+                "text": response.text,
+                "headers": dict(response.headers)
+            }
+    
+    def upload_cookies(self, account, cookies):
+        """上传账号Cookie到API"""
+        return self.post(
+            "account",
+            json_data={
+                "account": account,
+                "cookies": cookies,
+                "timestamp": import time; time.time()
+            }
+        )
+
+# 测试代码
+if __name__ == "__main__":
+    api = CurlHelper()
+    print(f"已加载API配置: {api.base_url}")
+    print(f"可用端点: {list(api.endpoints.keys())}") 

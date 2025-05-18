@@ -1,706 +1,589 @@
-import asyncio
+#!/usr/bin/env python3
+"""
+快手账号管理工具 - 主程序
+"""
+
 import os
 import sys
-import tkinter as tk
-from tkinter import filedialog, simpledialog, messagebox, scrolledtext, ttk
-from playwright.async_api import async_playwright
-import re
 import json
-from datetime import datetime
+import time
+import platform
+import tkinter as tk
+from tkinter import ttk, scrolledtext, filedialog, messagebox
 import threading
 import queue
-import platform
-from curl_helper import APIClient
+import traceback
+import requests
+from playwright.sync_api import sync_playwright
 
-# 创建API客户端实例
-api_client = APIClient()
+# 全局变量
+ACCOUNTS_DIR = "accounts"
+CONFIG_FILE = "curl_config.json"
+PROCESSED_FILE = "processed_accounts.json"
+running = False
+stop_event = threading.Event()
+log_queue = queue.Queue()
 
-# 创建消息队列用于线程间通信
-message_queue = queue.Queue()
+# 确保必要的目录存在
+if not os.path.exists(ACCOUNTS_DIR):
+    os.makedirs(ACCOUNTS_DIR)
 
-# 抑制MacOS上的IMK警告
-if platform.system() == 'Darwin':
-    # 尝试重定向stderr来抑制IMK警告
-    import io
-    import contextlib
-    
-    @contextlib.contextmanager
-    def suppress_stderr():
-        # 保存原始stderr
-        original_stderr = sys.stderr
-        # 创建一个空的io
-        sys.stderr = io.StringIO()
-        try:
-            yield
-        finally:
-            # 恢复原始stderr
-            sys.stderr = original_stderr
+# 加载已处理的账号
+processed_accounts = {}
+if os.path.exists(PROCESSED_FILE):
+    try:
+        with open(PROCESSED_FILE, "r", encoding="utf-8") as f:
+            processed_accounts = json.load(f)
+    except Exception as e:
+        print(f"加载已处理账号失败: {e}")
+
+# 加载配置
+config = {}
+if os.path.exists(CONFIG_FILE):
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except Exception as e:
+        print(f"加载配置失败: {e}")
 else:
-    @contextlib.contextmanager
-    def suppress_stderr():
-        yield
-
-# 用户配置
-class Config:
-    def __init__(self):
-        self.chrome_path = ""
-        self.processed_accounts = []
-        
-    def save_to_file(self):
-        with open("config.json", "w", encoding="utf-8") as f:
-            json.dump({
-                "chrome_path": self.chrome_path,
-                "processed_accounts": self.processed_accounts
-            }, f, ensure_ascii=False)
-    
-    def load_from_file(self):
-        try:
-            if os.path.exists("config.json"):
-                with open("config.json", "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self.chrome_path = data.get("chrome_path", "")
-                    self.processed_accounts = data.get("processed_accounts", [])
-                return True
-            return False
-        except Exception as e:
-            print(f"读取配置文件出错: {e}")
-            return False
-    
-    def auto_detect_chrome(self):
-        """自动检测Chrome浏览器位置"""
-        system = platform.system()
-        
-        if system == "Darwin":  # macOS
-            possible_paths = [
-                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-                '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
-                '/Users/' + os.getlogin() + '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-                # homebrew路径
-                '/opt/homebrew/bin/chromium',
-                # 更多可能的位置
-                '/Applications/Chromium.app/Contents/MacOS/Chromium'
-            ]
-        elif system == "Windows":
-            possible_paths = [
-                os.path.join(os.environ.get('PROGRAMFILES', 'C:\\Program Files'), 'Google\\Chrome\\Application\\chrome.exe'),
-                os.path.join(os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)'), 'Google\\Chrome\\Application\\chrome.exe'),
-                os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Google\\Chrome\\Application\\chrome.exe')
-            ]
-        elif system == "Linux":
-            possible_paths = [
-                '/usr/bin/google-chrome',
-                '/usr/bin/chromium-browser',
-                '/usr/bin/chromium',
-                '/snap/bin/chromium'
-            ]
-        else:
-            possible_paths = []
-        
-        # 检查路径是否存在
-        for path in possible_paths:
-            if os.path.exists(path):
-                self.chrome_path = path
-                self.save_to_file()
-                return path
-        
-        return None
-
-# 验证码输入弹窗
-def get_verification_code(phone_number):
-    result = {"code": None}
-    
-    # 安全地创建弹窗
-    with suppress_stderr():
-        # 创建弹窗
-        code_window = tk.Toplevel()
-        code_window.title("验证码输入")
-        code_window.geometry("300x150")
-        code_window.resizable(False, False)
-        
-        # 居中显示
-        screen_width = code_window.winfo_screenwidth()
-        screen_height = code_window.winfo_screenheight()
-        x = (screen_width - 300) // 2
-        y = (screen_height - 150) // 2
-        code_window.geometry(f"300x150+{x}+{y}")
-        
-        # 验证码输入框
-        tk.Label(code_window, text=f"请输入手机 {phone_number} 收到的验证码:", pady=10).pack()
-        code_var = tk.StringVar()
-        entry = tk.Entry(code_window, textvariable=code_var, font=("Arial", 14), width=10, justify="center")
-        entry.pack(pady=10)
-        entry.focus()
-        
-        def on_submit():
-            code = code_var.get()
-            if len(code) == 6 and code.isdigit():
-                result["code"] = code
-                code_window.destroy()
-        
-        # 自动检测输入长度
-        def check_code_length(*args):
-            code = code_var.get()
-            if len(code) == 6 and code.isdigit():
-                on_submit()
-        
-        code_var.trace_add("write", check_code_length)
-        
-        # 提交按钮
-        tk.Button(code_window, text="确定", command=on_submit, width=10).pack(pady=10)
-        
-        # 当窗口关闭时的处理
-        def on_closing():
-            result["code"] = None
-            code_window.destroy()
-        
-        code_window.protocol("WM_DELETE_WINDOW", on_closing)
-        
-        # 等待窗口关闭
-        code_window.wait_window()
-    
-    return result["code"]
-
-# 发送账号信息到API
-def send_account_info(phone, cookie):
-    try:
-        # 准备要发送的数据
-        data = {
-            "phone": phone,
-            "cookie": cookie,
-            "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # 创建默认配置
+    config = {
+        "base_url": "https://api.example.com",
+        "default_headers": {
+            "Content-Type": "application/json",
+            "User-Agent": "KwaiTool/1.0"
+        },
+        "timeout": 30,
+        "endpoints": {
+            "login": "/login",
+            "account": "/account"
         }
-        
-        # 调用API发送数据
-        response = api_client.account(data)
-        
-        if response and response.get("code") == 0:
-            message_queue.put(f"账号 {phone} 的信息已成功发送到服务器")
-            return True
-        else:
-            error_msg = response.get("msg", "未知错误") if response else "请求失败"
-            message_queue.put(f"账号 {phone} 的信息发送失败: {error_msg}")
-            return False
-    except Exception as e:
-        message_queue.put(f"发送账号信息时出错: {e}")
-        return False
+    }
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, indent=2, ensure_ascii=False, f)
 
-async def process_single_account(phone_number, config, playwright):
-    message_queue.put(f"开始处理账号: {phone_number}")
-    
-    user_info_cookie = None
-    user_info_request_found = False
-    
-    # 启动浏览器
-    browser_type = playwright.chromium
-    browser = await browser_type.launch_persistent_context(
-        user_data_dir="",  # 空字符串表示使用临时目录
-        executable_path=config.chrome_path if config.chrome_path else None,
-        headless=False,
-        args=["--incognito"]  # 启用无痕模式
-    )
-    
-    # 创建新页面
-    page = await browser.new_page()
-    
-    # 设置网络请求监听 - 监听响应
-    async def handle_response(response):
-        nonlocal user_info_cookie, user_info_request_found
-        # 捕获 user/info 请求
-        if "uc.e.kuaishou.com/rest/web/user/info" in response.url and not user_info_request_found:
-            message_queue.put("\n检测到用户信息请求！")
-            message_queue.put(f"响应URL: {response.url}")
-            
-            # 从页面获取所有Cookie
-            cookies = await page.context.cookies()
-            if cookies:
-                # 提取所有cookie并格式化为cookie字符串
-                cookie_string = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
-                user_info_cookie = cookie_string
-                message_queue.put(f"获取到Cookie: {user_info_cookie}")
-                user_info_request_found = True
-                # 发送账号信息到API
-                if send_account_info(phone_number, user_info_cookie):
-                    message_queue.put(f"账号 {phone_number} 的信息已发送到服务器")
-                else:
-                    message_queue.put(f"账号 {phone_number} 的信息发送失败")
-    
-    # 注册响应监听器
-    page.on("response", handle_response)
-    
-    # 也要继续监听请求
-    async def handle_request(request):
-        nonlocal user_info_cookie, user_info_request_found
-        # 捕获 user/info 请求
-        if "uc.e.kuaishou.com/rest/web/user/info" in request.url and not user_info_request_found:
-            message_queue.put("\n检测到用户信息请求！")
-            message_queue.put(f"请求URL: {request.url}")
-            
-            # 从请求中提取Cookie
-            headers = request.headers
-            if "cookie" in headers:
-                req_cookie = headers["cookie"]
-                message_queue.put(f"请求中的Cookie: {req_cookie}")
-                user_info_cookie = req_cookie
-                user_info_request_found = True
-                # 发送账号信息到API
-                if send_account_info(phone_number, user_info_cookie):
-                    message_queue.put(f"账号 {phone_number} 的信息已发送到服务器")
-                else:
-                    message_queue.put(f"账号 {phone_number} 的信息发送失败")
-    
-    # 注册请求监听器
-    page.on("request", handle_request)
-    
-    # 导航到快手电商牛平台
-    message_queue.put("正在导航到快手电商牛平台...")
-    await page.goto("https://niu.e.kuaishou.com/welcome")
-    
-    # 等待页面加载完成
-    message_queue.put("页面加载完成...")
-    
-    # 检测是否有"立即登录"按钮
-    message_queue.put("检测是否存在'立即登录'按钮...")
-    try:
-        # 使用多种选择器尝试定位按钮
-        login_button = None
+class KwaiTool:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("快手账号管理工具")
+        self.root.geometry("800x600")
         
-        # 方法1：通过文本内容查找按钮
-        if not login_button:
-            login_button = await page.wait_for_selector("button:has-text('立即登录')", timeout=5000)
+        # 设置窗口图标
+        if platform.system() == "Windows" and os.path.exists("app_icon.ico"):
+            self.root.iconbitmap("app_icon.ico")
         
-        # 方法2：使用更具体的选择器
-        if not login_button:
-            login_button = await page.wait_for_selector("button.ant-btn span:has-text('立即登录')", timeout=5000)
-            if login_button:
-                # 获取父按钮元素
-                login_button = await login_button.evaluate("el => el.closest('button')")
+        # 创建主框架
+        self.main_frame = ttk.Frame(self.root, padding="10")
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # 方法3：使用XPath
-        if not login_button:
-            login_button = await page.wait_for_selector("//button[contains(@class, 'ant-btn')][.//span[text()='立即登录']]", timeout=5000)
+        # 创建菜单栏
+        self.create_menu()
         
-        if login_button:
-            message_queue.put("找到'立即登录'按钮，点击中...")
-            await login_button.click()
-            message_queue.put("已点击'立即登录'按钮")
-            
-            # 等待登录页面加载
-            await page.wait_for_timeout(2000)
-            
-            # 点击"验证码登录"选项卡
-            message_queue.put("查找'验证码登录'选项卡...")
-            code_login_tab = await page.wait_for_selector("div.tab.svelte-rlva34:has-text('验证码登录')", timeout=5000)
-            if code_login_tab:
-                message_queue.put("找到'验证码登录'选项卡，点击中...")
-                await code_login_tab.click()
-                message_queue.put("已切换到验证码登录模式")
-                
-                # 输入手机号
-                message_queue.put(f"正在输入手机号: {phone_number}")
-                phone_input = await page.wait_for_selector("input.component-input-real-value[placeholder='手机号']", timeout=5000)
-                await phone_input.fill(phone_number)
-                message_queue.put(f"已输入手机号: {phone_number}")
-                
-                # 点击发送验证码
-                send_code_button = await page.wait_for_selector("span.svelte-9i4e5y:has-text('发送手机验证码')", timeout=5000)
-                await send_code_button.click()
-                message_queue.put("已点击发送验证码按钮")
-                
-                # 弹窗获取验证码
-                message_queue.put("等待用户输入验证码...")
-                verification_code = get_verification_code(phone_number)
-                
-                if verification_code:
-                    message_queue.put(f"获取到验证码: {verification_code}")
-                    
-                    # 输入验证码
-                    code_input = await page.wait_for_selector("input.component-input-real-value[placeholder='请输入验证码']", timeout=5000)
-                    await code_input.fill(verification_code)
-                    
-                    # 勾选复选框
-                    checkbox = await page.wait_for_selector("input.component-checkbox-input.svelte-1x8ouvx", timeout=5000)
-                    if not await checkbox.is_checked():
-                        await checkbox.check()
-                        message_queue.put("已勾选同意条款复选框")
-                    
-                    # 点击登录按钮
-                    submit_button = await page.wait_for_selector("button.component-button.submit.component-button-primary", timeout=5000)
-                    await submit_button.click()
-                    message_queue.put("已点击登录按钮")
-                    
-                    # 等待登录成功，检测登录弹窗是否消失
-                    message_queue.put("等待登录完成...")
-                    try:
-                        # 等待登录弹窗消失
-                        await page.wait_for_selector("div.tab.svelte-rlva34", state="hidden", timeout=30000)
-                        message_queue.put("登录弹窗已消失，登录成功！")
-                        
-                        # 登录成功后尝试访问用户信息
-                        if not user_info_request_found:
-                            message_queue.put("尝试加载用户信息页面...")
-                            # 主动访问用户信息页面
-                            await page.goto("https://uc.e.kuaishou.com/rest/web/user/info", wait_until="networkidle")
-                            await page.wait_for_timeout(2000)
-                        
-                        # 等待获取Cookie
-                        max_wait = 30  # 最多等待30秒
-                        for i in range(max_wait):
-                            if user_info_request_found:
-                                break
-                            await page.wait_for_timeout(1000)
-                        
-                        if user_info_request_found:
-                            message_queue.put(f"账号 {phone_number} 登录成功！Cookie已获取")
-                            # 添加到已处理列表
-                            if phone_number not in config.processed_accounts:
-                                config.processed_accounts.append(phone_number)
-                                config.save_to_file()
-                                message_queue.put(f"账号 {phone_number} 已添加到已处理列表")
-                        else:
-                            message_queue.put(f"账号 {phone_number} 登录成功，但未能获取Cookie")
-                    except Exception as e:
-                        message_queue.put(f"等待登录完成时出错: {e}")
-                else:
-                    message_queue.put("未获取到验证码，取消登录")
-            else:
-                message_queue.put("未找到'验证码登录'选项卡")
-        else:
-            message_queue.put("未找到'立即登录'按钮")
-    except Exception as e:
-        message_queue.put(f"登录操作出错: {e}")
+        # 创建工具栏
+        self.create_toolbar()
+        
+        # 创建主界面
+        self.create_main_ui()
+        
+        # 创建状态栏
+        self.create_statusbar()
+        
+        # 绑定关闭事件
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # 启动日志更新线程
+        self.log_update_thread = threading.Thread(target=self.update_log, daemon=True)
+        self.log_update_thread.start()
+        
+        # 显示欢迎信息
+        self.log("快手账号管理工具已启动")
+        self.log(f"当前系统: {platform.system()} {platform.version()}")
+        self.log(f"Python版本: {platform.python_version()}")
+        self.log(f"账号目录: {os.path.abspath(ACCOUNTS_DIR)}")
+        self.update_status("就绪")
     
-    # 关闭浏览器
-    await browser.close()
-    return user_info_request_found
-
-# 主应用类
-class Application(tk.Tk):
-    def __init__(self):
-        # 在创建Tk窗口前抑制警告
-        with suppress_stderr():
-            super().__init__()
+    def create_menu(self):
+        """创建菜单栏"""
+        menubar = tk.Menu(self.root)
         
-        self.title("快手账号批量登录工具")
-        self.geometry("800x600")
-        self.config = Config()
-        self.config.load_from_file()
+        # 文件菜单
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="导入账号", command=self.import_accounts)
+        file_menu.add_command(label="导出Cookies", command=self.export_cookies)
+        file_menu.add_separator()
+        file_menu.add_command(label="退出", command=self.on_closing)
+        menubar.add_cascade(label="文件", menu=file_menu)
         
-        # 自动检测Chrome路径（如果配置中没有）
-        if not self.config.chrome_path or not os.path.exists(self.config.chrome_path):
-            detected_path = self.config.auto_detect_chrome()
-            if detected_path:
-                print(f"自动检测到Chrome路径: {detected_path}")
+        # 操作菜单
+        action_menu = tk.Menu(menubar, tearoff=0)
+        action_menu.add_command(label="开始处理", command=self.start_processing)
+        action_menu.add_command(label="停止处理", command=self.stop_processing)
+        action_menu.add_separator()
+        action_menu.add_command(label="清除已处理记录", command=self.clear_processed)
+        menubar.add_cascade(label="操作", menu=action_menu)
         
-        self.create_widgets()
-        self.processing = False
+        # 设置菜单
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        settings_menu.add_command(label="API配置", command=self.edit_config)
+        settings_menu.add_command(label="浏览器设置", command=self.browser_settings)
+        menubar.add_cascade(label="设置", menu=settings_menu)
         
-        # 确保存在必要的目录
-        os.makedirs("accounts", exist_ok=True)
+        # 帮助菜单
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="使用说明", command=self.show_help)
+        help_menu.add_command(label="关于", command=self.show_about)
+        menubar.add_cascade(label="帮助", menu=help_menu)
         
-        # 启动消息处理线程
-        threading.Thread(target=self.process_messages, daemon=True).start()
+        self.root.config(menu=menubar)
     
-    def create_widgets(self):
-        # 在创建组件时抑制警告
-        with suppress_stderr():
-            # 创建主框架
-            main_frame = ttk.Frame(self)
-            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-            
-            # 创建左右分栏
-            left_frame = ttk.Frame(main_frame)
-            left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            
-            right_frame = ttk.Frame(main_frame)
-            right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(10, 0))
-            
-            # 左侧：设置和账号输入
-            settings_frame = ttk.LabelFrame(left_frame, text="设置")
-            settings_frame.pack(fill=tk.X, pady=(0, 10))
-            
-            # Chrome路径设置
-            chrome_frame = ttk.Frame(settings_frame)
-            chrome_frame.pack(fill=tk.X, padx=5, pady=5)
-            
-            ttk.Label(chrome_frame, text="Chrome路径:").pack(side=tk.LEFT)
-            self.chrome_path_var = tk.StringVar(value=self.config.chrome_path)
-            chrome_entry = ttk.Entry(chrome_frame, textvariable=self.chrome_path_var)
-            chrome_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 5))
-            ttk.Button(chrome_frame, text="选择", command=self.select_chrome_path).pack(side=tk.RIGHT)
-            
-            # 账号输入区域
-            accounts_frame = ttk.LabelFrame(left_frame, text="账号管理")
-            accounts_frame.pack(fill=tk.BOTH, expand=True)
-            
-            # 账号输入
-            ttk.Label(accounts_frame, text="输入账号（每行一个手机号）:").pack(anchor=tk.W, padx=5, pady=(5, 0))
-            
-            # 账号输入框
-            self.accounts_text = scrolledtext.ScrolledText(accounts_frame, height=10)
-            self.accounts_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            
-            # 账号操作按钮
-            buttons_frame = ttk.Frame(accounts_frame)
-            buttons_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
-            
-            ttk.Button(buttons_frame, text="从文件导入", command=self.import_accounts).pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Button(buttons_frame, text="清空", command=self.clear_accounts).pack(side=tk.LEFT, padx=(0, 5))
-            ttk.Button(buttons_frame, text="清除已处理记录", command=self.clear_processed_records).pack(side=tk.LEFT)
-            
-            # 操作按钮
-            action_frame = ttk.Frame(left_frame)
-            action_frame.pack(fill=tk.X, pady=(10, 0))
-            
-            self.start_button = ttk.Button(action_frame, text="开始处理", command=self.start_processing)
-            self.start_button.pack(fill=tk.X)
-            
-            # 右侧：日志输出
-            log_frame = ttk.LabelFrame(right_frame, text="处理日志")
-            log_frame.pack(fill=tk.BOTH, expand=True)
-            
-            self.log_text = scrolledtext.ScrolledText(log_frame, state=tk.DISABLED)
-            self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            
-            # 状态栏
-            self.status_var = tk.StringVar(value="就绪")
-            status_bar = ttk.Label(self, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
-            status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-    
-    def select_chrome_path(self):
-        with suppress_stderr():
-            chrome_dir = filedialog.askdirectory(title="请选择Chrome浏览器所在的文件夹")
+    def create_toolbar(self):
+        """创建工具栏"""
+        toolbar = ttk.Frame(self.main_frame)
+        toolbar.pack(fill=tk.X, pady=(0, 10))
         
-        if chrome_dir:
-            # 在所选目录中查找Chrome可执行文件
-            possible_names = []
-            
-            # 根据操作系统确定可能的文件名
-            if platform.system() == "Darwin":  # macOS
-                possible_names = ["Google Chrome", "Google Chrome Canary", "Chromium"]
-            elif platform.system() == "Windows":
-                possible_names = ["chrome.exe", "chromium.exe"]
-            else:  # Linux
-                possible_names = ["google-chrome", "chromium-browser", "chromium"]
-            
-            found = False
-            for name in possible_names:
-                path = os.path.join(chrome_dir, name)
-                if os.path.exists(path):
-                    self.chrome_path_var.set(path)
-                    self.config.chrome_path = path
-                    self.config.save_to_file()
-                    found = True
-                    break
-            
-            # 如果在当前目录没找到，macOS还需要检查特殊路径
-            if not found and platform.system() == "Darwin":
-                for name in ["Google Chrome.app", "Google Chrome Canary.app", "Chromium.app"]:
-                    app_path = os.path.join(chrome_dir, name)
-                    if os.path.exists(app_path):
-                        # macOS应用程序中的可执行文件在Contents/MacOS目录
-                        exec_path = os.path.join(app_path, "Contents", "MacOS")
-                        if os.path.exists(exec_path):
-                            # 找到可执行文件
-                            for exec_name in os.listdir(exec_path):
-                                if "Chrome" in exec_name or "Chromium" in exec_name:
-                                    full_path = os.path.join(exec_path, exec_name)
-                                    self.chrome_path_var.set(full_path)
-                                    self.config.chrome_path = full_path
-                                    self.config.save_to_file()
-                                    found = True
-                                    break
-                        if found:
-                            break
-            
-            # 如果没找到，尝试在子目录中查找
-            if not found:
-                for root, dirs, files in os.walk(chrome_dir):
-                    for file in files:
-                        file_lower = file.lower()
-                        if (platform.system() == "Windows" and file_lower == "chrome.exe") or \
-                           (platform.system() != "Windows" and ("chrome" in file_lower or "chromium" in file_lower)):
-                            path = os.path.join(root, file)
-                            self.chrome_path_var.set(path)
-                            self.config.chrome_path = path
-                            self.config.save_to_file()
-                            found = True
-                            break
-                    if found:
-                        break
-            
-            if found:
-                self.log(f"已选择Chrome浏览器: {self.config.chrome_path}")
-            else:
-                messagebox.showwarning("警告", "在选定目录中未找到Chrome浏览器")
+        ttk.Button(toolbar, text="导入账号", command=self.import_accounts).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="开始处理", command=self.start_processing).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="停止处理", command=self.stop_processing).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="清除记录", command=self.clear_processed).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="导出Cookies", command=self.export_cookies).pack(side=tk.LEFT, padx=2)
     
-    def import_accounts(self):
-        with suppress_stderr():
-            file_path = filedialog.askopenfilename(title="选择账号文件", filetypes=[("文本文件", "*.txt")])
+    def create_main_ui(self):
+        """创建主界面"""
+        # 创建上下分割的面板
+        paned = ttk.PanedWindow(self.main_frame, orient=tk.VERTICAL)
+        paned.pack(fill=tk.BOTH, expand=True)
         
-        if file_path:
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    accounts = [line.strip() for line in f if line.strip()]
-                    self.accounts_text.delete(1.0, tk.END)
-                    self.accounts_text.insert(tk.END, "\n".join(accounts))
-                self.log(f"从文件导入了 {len(accounts)} 个账号")
-            except Exception as e:
-                messagebox.showerror("错误", f"导入账号失败: {e}")
+        # 上部分：账号列表
+        accounts_frame = ttk.LabelFrame(paned, text="账号列表")
+        paned.add(accounts_frame, weight=1)
+        
+        # 创建账号列表
+        columns = ("账号", "密码", "状态", "更新时间")
+        self.accounts_tree = ttk.Treeview(accounts_frame, columns=columns, show="headings")
+        
+        # 设置列标题
+        for col in columns:
+            self.accounts_tree.heading(col, text=col)
+            self.accounts_tree.column(col, width=100)
+        
+        # 添加滚动条
+        accounts_scrollbar = ttk.Scrollbar(accounts_frame, orient=tk.VERTICAL, command=self.accounts_tree.yview)
+        self.accounts_tree.configure(yscrollcommand=accounts_scrollbar.set)
+        
+        # 布局
+        accounts_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.accounts_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # 下部分：日志区域
+        log_frame = ttk.LabelFrame(paned, text="日志")
+        paned.add(log_frame, weight=1)
+        
+        # 创建日志文本区域
+        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, height=10)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        self.log_text.config(state=tk.DISABLED)
     
-    def clear_accounts(self):
-        self.accounts_text.delete(1.0, tk.END)
+    def create_statusbar(self):
+        """创建状态栏"""
+        self.status_var = tk.StringVar()
+        self.status_var.set("就绪")
+        status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
     
-    def clear_processed_records(self):
-        self.config.processed_accounts = []
-        self.config.save_to_file()
-        self.log("已清除所有账号的处理记录")
+    def update_status(self, message):
+        """更新状态栏"""
+        self.status_var.set(message)
     
     def log(self, message):
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(tk.END, f"{message}\n")
-        self.log_text.see(tk.END)
-        self.log_text.config(state=tk.DISABLED)
+        """添加日志消息到队列"""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        log_queue.put(f"[{timestamp}] {message}")
     
-    def process_messages(self):
-        """处理后台线程发送的消息"""
+    def update_log(self):
+        """从队列更新日志显示"""
         while True:
             try:
-                message = message_queue.get(timeout=0.1)
-                self.log(message)
-            except queue.Empty:
-                if not self.processing:
-                    # 如果没有消息且未在处理中，降低CPU使用率
-                    self.after(100, lambda: None)
-                continue
+                # 检查队列中是否有新日志
+                try:
+                    message = log_queue.get(block=False)
+                    self.log_text.config(state=tk.NORMAL)
+                    self.log_text.insert(tk.END, message + "\n")
+                    self.log_text.see(tk.END)
+                    self.log_text.config(state=tk.DISABLED)
+                    log_queue.task_done()
+                except queue.Empty:
+                    pass
+                
+                time.sleep(0.1)
+            except Exception as e:
+                print(f"日志更新线程异常: {e}")
     
-    def start_processing(self):
-        if self.processing:
-            messagebox.showinfo("提示", "已有账号正在处理中")
+    def load_accounts(self):
+        """加载账号列表"""
+        # 清空现有列表
+        for item in self.accounts_tree.get_children():
+            self.accounts_tree.delete(item)
+        
+        # 扫描账号目录
+        if not os.path.exists(ACCOUNTS_DIR):
+            os.makedirs(ACCOUNTS_DIR)
+            self.log(f"创建账号目录: {ACCOUNTS_DIR}")
             return
-        
-        # 获取账号列表
-        accounts_text = self.accounts_text.get(1.0, tk.END).strip()
-        if not accounts_text:
-            messagebox.showinfo("提示", "请先输入或导入账号")
-            return
-        
-        accounts = [line.strip() for line in accounts_text.split("\n") if line.strip()]
-        if not accounts:
-            messagebox.showinfo("提示", "没有有效账号")
-            return
-        
-        # 确保Chrome路径有效
-        if not self.config.chrome_path or not os.path.exists(self.config.chrome_path):
-            # 尝试自动检测
-            detected_path = self.config.auto_detect_chrome()
-            if not detected_path:
-                result = messagebox.askyesno("提示", "未找到Chrome浏览器，是否选择Chrome路径？")
-                if result:
-                    self.select_chrome_path()
-                    if not self.config.chrome_path or not os.path.exists(self.config.chrome_path):
-                        messagebox.showinfo("提示", "未选择有效的Chrome路径，将使用Playwright内置浏览器")
-                else:
-                    self.log("将使用Playwright内置浏览器")
-            else:
-                self.chrome_path_var.set(detected_path)
-                self.log(f"自动检测到Chrome路径: {detected_path}")
-        
-        # 检查是否有已处理的账号
-        processed_accounts = [acc for acc in accounts if acc in self.config.processed_accounts]
-        if processed_accounts:
-            # 询问用户是否重新处理已处理过的账号
-            if len(processed_accounts) == len(accounts):
-                result = messagebox.askyesno("提示", "所有账号都已处理过，是否重新处理？")
-                if not result:
-                    return
-                # 用户选择重新处理，清空已处理记录
-                for acc in processed_accounts:
-                    if acc in self.config.processed_accounts:
-                        self.config.processed_accounts.remove(acc)
-                self.config.save_to_file()
-                self.log("已清除所有账号的处理记录，将重新处理")
-            else:
-                # 部分账号已处理
-                result = messagebox.askyesno("提示", f"有 {len(processed_accounts)} 个账号已处理过，是否重新处理这些账号？")
-                if result:
-                    # 清除这些账号的处理记录
-                    for acc in processed_accounts:
-                        if acc in self.config.processed_accounts:
-                            self.config.processed_accounts.remove(acc)
-                    self.config.save_to_file()
-                    self.log("已清除已处理账号的记录，将重新处理所有账号")
-                else:
-                    # 只处理未处理的账号
-                    accounts = [acc for acc in accounts if acc not in self.config.processed_accounts]
-                    if not accounts:
-                        messagebox.showinfo("提示", "没有新的账号需要处理")
-                        return
-                    self.log(f"将只处理 {len(accounts)} 个未处理过的账号")
-        
-        self.processing = True
-        self.start_button.config(state=tk.DISABLED)
-        self.status_var.set(f"处理中... (0/{len(accounts)})")
-        
-        # 清空日志
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.delete(1.0, tk.END)
-        self.log_text.config(state=tk.DISABLED)
-        
-        # 启动处理线程
-        threading.Thread(target=self.process_accounts, args=(accounts,), daemon=True).start()
-    
-    def process_accounts(self, accounts):
-        """处理账号的后台线程"""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        self.log(f"开始处理 {len(accounts)} 个账号")
-        
-        async def run_processing():
-            async with async_playwright() as playwright:
-                for i, phone in enumerate(accounts):
-                    # 更新状态栏
-                    self.status_var.set(f"处理中... ({i+1}/{len(accounts)})")
-                    
-                    # 处理单个账号
-                    await process_single_account(phone, self.config, playwright)
-                    
-                    # 短暂暂停，避免过快处理下一个账号
-                    await asyncio.sleep(2)
         
         try:
-            loop.run_until_complete(run_processing())
+            account_files = [f for f in os.listdir(ACCOUNTS_DIR) if f.endswith(".txt")]
+            
+            for file in account_files:
+                try:
+                    with open(os.path.join(ACCOUNTS_DIR, file), "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                        if len(lines) >= 2:
+                            username = lines[0].strip()
+                            password = lines[1].strip()
+                            
+                            # 检查是否已处理
+                            status = "未处理"
+                            update_time = ""
+                            if username in processed_accounts:
+                                status = "已处理"
+                                update_time = processed_accounts[username].get("time", "")
+                            
+                            self.accounts_tree.insert("", tk.END, values=(username, password, status, update_time))
+                except Exception as e:
+                    self.log(f"加载账号文件 {file} 失败: {e}")
+            
+            self.log(f"已加载 {len(account_files)} 个账号文件")
         except Exception as e:
-            message_queue.put(f"处理过程出错: {e}")
-        finally:
-            # 处理完成后恢复界面状态
-            self.after(0, self.processing_completed, len(accounts))
+            self.log(f"加载账号列表失败: {e}")
     
-    def processing_completed(self, count):
-        self.processing = False
-        self.start_button.config(state=tk.NORMAL)
-        self.status_var.set("处理完成")
-        messagebox.showinfo("处理完成", f"所有账号处理完成！\n共处理 {count} 个账号")
+    def import_accounts(self):
+        """导入账号"""
+        file_path = filedialog.askopenfilename(
+            title="选择账号文件",
+            filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")]
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                
+                imported = 0
+                for i in range(0, len(lines), 2):
+                    if i + 1 < len(lines):
+                        username = lines[i].strip()
+                        password = lines[i + 1].strip()
+                        
+                        if username and password:
+                            # 创建账号文件
+                            account_file = os.path.join(ACCOUNTS_DIR, f"{username}.txt")
+                            with open(account_file, "w", encoding="utf-8") as af:
+                                af.write(f"{username}\n{password}")
+                            imported += 1
+                
+                self.log(f"成功导入 {imported} 个账号")
+                self.load_accounts()
+        except Exception as e:
+            self.log(f"导入账号失败: {e}")
+            messagebox.showerror("错误", f"导入账号失败: {e}")
+    
+    def start_processing(self):
+        """开始处理账号"""
+        global running
+        
+        if running:
+            messagebox.showinfo("提示", "已有处理任务正在运行")
+            return
+        
+        # 获取未处理的账号
+        accounts_to_process = []
+        for item in self.accounts_tree.get_children():
+            values = self.accounts_tree.item(item, "values")
+            if values[2] != "已处理":
+                accounts_to_process.append((values[0], values[1]))
+        
+        if not accounts_to_process:
+            messagebox.showinfo("提示", "没有需要处理的账号")
+            return
+        
+        # 重置停止事件
+        stop_event.clear()
+        
+        # 启动处理线程
+        running = True
+        self.update_status("正在处理账号...")
+        processing_thread = threading.Thread(
+            target=self.process_accounts,
+            args=(accounts_to_process,),
+            daemon=True
+        )
+        processing_thread.start()
+    
+    def process_accounts(self, accounts):
+        """处理账号的线程函数"""
+        global running
+        
+        try:
+            self.log(f"开始处理 {len(accounts)} 个账号")
+            
+            for i, (username, password) in enumerate(accounts):
+                if stop_event.is_set():
+                    self.log("处理已停止")
+                    break
+                
+                self.log(f"正在处理账号 ({i+1}/{len(accounts)}): {username}")
+                
+                try:
+                    # 使用Playwright登录并获取Cookie
+                    cookies = self.login_and_get_cookies(username, password)
+                    
+                    if cookies:
+                        # 保存Cookie
+                        cookie_file = os.path.join(ACCOUNTS_DIR, f"{username}_cookies.json")
+                        with open(cookie_file, "w", encoding="utf-8") as f:
+                            json.dump(cookies, f, indent=2, ensure_ascii=False)
+                        
+                        # 更新已处理记录
+                        processed_accounts[username] = {
+                            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                            "cookie_file": cookie_file
+                        }
+                        
+                        # 保存已处理记录
+                        with open(PROCESSED_FILE, "w", encoding="utf-8") as f:
+                            json.dump(processed_accounts, f, indent=2, ensure_ascii=False)
+                        
+                        self.log(f"账号 {username} 处理成功")
+                    else:
+                        self.log(f"账号 {username} 登录失败")
+                
+                except Exception as e:
+                    self.log(f"处理账号 {username} 时出错: {e}")
+                    traceback.print_exc()
+            
+            self.log("账号处理完成")
+        except Exception as e:
+            self.log(f"处理过程出错: {e}")
+            traceback.print_exc()
+        finally:
+            running = False
+            self.update_status("就绪")
+            
+            # 刷新账号列表
+            self.root.after(0, self.load_accounts)
+    
+    def login_and_get_cookies(self, username, password):
+        """使用Playwright登录并获取Cookie"""
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context()
+                page = context.new_page()
+                
+                # 访问快手电商牛平台
+                page.goto("https://s.kwaixiaodian.com/")
+                self.log("已打开快手电商牛平台")
+                
+                # 等待登录页面加载
+                page.wait_for_selector("input[name='username']", timeout=30000)
+                
+                # 输入用户名和密码
+                page.fill("input[name='username']", username)
+                page.fill("input[name='password']", password)
+                
+                # 点击登录按钮
+                page.click("button[type='submit']")
+                
+                # 等待登录成功
+                page.wait_for_url("**/dashboard*", timeout=60000)
+                
+                # 获取所有Cookie
+                cookies = context.cookies()
+                
+                # 关闭浏览器
+                browser.close()
+                
+                return cookies
+        except Exception as e:
+            self.log(f"登录过程出错: {e}")
+            return None
+    
+    def stop_processing(self):
+        """停止处理账号"""
+        if not running:
+            messagebox.showinfo("提示", "没有正在运行的处理任务")
+            return
+        
+        stop_event.set()
+        self.log("正在停止处理...")
+    
+    def clear_processed(self):
+        """清除已处理记录"""
+        if messagebox.askyesno("确认", "确定要清除所有已处理的记录吗？\n这将允许重新处理所有账号。"):
+            global processed_accounts
+            processed_accounts = {}
+            
+            # 保存空的已处理记录
+            with open(PROCESSED_FILE, "w", encoding="utf-8") as f:
+                json.dump(processed_accounts, f)
+            
+            self.log("已清除所有处理记录")
+            self.load_accounts()
+    
+    def export_cookies(self):
+        """导出所有Cookies"""
+        if not processed_accounts:
+            messagebox.showinfo("提示", "没有已处理的账号")
+            return
+        
+        export_dir = filedialog.askdirectory(title="选择导出目录")
+        if not export_dir:
+            return
+        
+        try:
+            exported = 0
+            for username, data in processed_accounts.items():
+                cookie_file = data.get("cookie_file")
+                if cookie_file and os.path.exists(cookie_file):
+                    # 读取Cookie文件
+                    with open(cookie_file, "r", encoding="utf-8") as f:
+                        cookies = json.load(f)
+                    
+                    # 导出到目标目录
+                    export_file = os.path.join(export_dir, f"{username}_cookies.json")
+                    with open(export_file, "w", encoding="utf-8") as f:
+                        json.dump(cookies, f, indent=2, ensure_ascii=False)
+                    
+                    exported += 1
+            
+            self.log(f"成功导出 {exported} 个账号的Cookies")
+            messagebox.showinfo("导出完成", f"成功导出 {exported} 个账号的Cookies")
+        except Exception as e:
+            self.log(f"导出Cookies失败: {e}")
+            messagebox.showerror("错误", f"导出Cookies失败: {e}")
+    
+    def edit_config(self):
+        """编辑API配置"""
+        # 创建配置编辑窗口
+        config_window = tk.Toplevel(self.root)
+        config_window.title("API配置")
+        config_window.geometry("600x400")
+        config_window.grab_set()  # 模态窗口
+        
+        # 创建文本编辑区
+        config_text = scrolledtext.ScrolledText(config_window, wrap=tk.WORD)
+        config_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 加载当前配置
+        config_text.insert(tk.END, json.dumps(config, indent=2, ensure_ascii=False))
+        
+        # 创建按钮区域
+        button_frame = ttk.Frame(config_window)
+        button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        
+        def save_config():
+            try:
+                # 获取文本内容并解析JSON
+                new_config = json.loads(config_text.get("1.0", tk.END))
+                
+                # 保存到配置文件
+                with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                    json.dump(new_config, f, indent=2, ensure_ascii=False)
+                
+                # 更新全局配置
+                global config
+                config = new_config
+                
+                self.log("API配置已更新")
+                config_window.destroy()
+            except Exception as e:
+                messagebox.showerror("错误", f"保存配置失败: {e}")
+        
+        ttk.Button(button_frame, text="保存", command=save_config).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="取消", command=config_window.destroy).pack(side=tk.RIGHT, padx=5)
+    
+    def browser_settings(self):
+        """浏览器设置"""
+        messagebox.showinfo("浏览器设置", "此功能尚未实现")
+    
+    def show_help(self):
+        """显示使用说明"""
+        help_text = """
+使用说明：
+
+1. 导入账号：
+   - 点击"文件"→"导入账号"或工具栏上的"导入账号"按钮
+   - 选择包含账号信息的文本文件（每行一个账号，每两行为一组）
+
+2. 处理账号：
+   - 点击"操作"→"开始处理"或工具栏上的"开始处理"按钮
+   - 程序将自动登录并获取Cookie
+
+3. 导出Cookies：
+   - 点击"文件"→"导出Cookies"或工具栏上的"导出Cookies"按钮
+   - 选择导出目录
+
+4. 清除已处理记录：
+   - 点击"操作"→"清除已处理记录"或工具栏上的"清除记录"按钮
+   - 这将允许重新处理所有账号
+
+5. API配置：
+   - 点击"设置"→"API配置"
+   - 编辑API相关设置
+        """
+        
+        help_window = tk.Toplevel(self.root)
+        help_window.title("使用说明")
+        help_window.geometry("600x400")
+        
+        help_text_widget = scrolledtext.ScrolledText(help_window, wrap=tk.WORD)
+        help_text_widget.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        help_text_widget.insert(tk.END, help_text)
+        help_text_widget.config(state=tk.DISABLED)
+    
+    def show_about(self):
+        """显示关于信息"""
+        about_text = """
+快手账号管理工具
+
+版本: 1.0.0
+作者: 快手账号管理团队
+
+本工具用于批量登录快手电商牛平台并提取Cookie。
+        """
+        
+        messagebox.showinfo("关于", about_text)
+    
+    def on_closing(self):
+        """关闭窗口时的处理"""
+        if running:
+            if not messagebox.askyesno("确认", "有任务正在运行，确定要退出吗？"):
+                return
+            stop_event.set()
+        
+        self.root.destroy()
+
+# 检查是否在macOS上运行，如果是则尝试修复IMK警告
+if platform.system() == "Darwin":
+    try:
+        import mac_fix
+        mac_fix.fix_imk_warning()
+    except ImportError:
+        print("未找到mac_fix模块，跳过macOS IMK修复")
 
 # 主程序入口
 if __name__ == "__main__":
-    # 设置默认错误处理
-    if platform.system() == 'Darwin':
-        # 重定向stderr以抑制macOS的IMK警告
-        original_stderr = sys.stderr
-        try:
-            sys.stderr = open(os.devnull, 'w')
-        except Exception as e:
-            print(f"警告: 无法重定向stderr: {e}")
-    
     try:
-        app = Application()
-        app.mainloop()
-    finally:
-        # 恢复stderr
-        if platform.system() == 'Darwin' and 'original_stderr' in locals():
-            try:
-                sys.stderr.close()
-            except:
-                pass
-            sys.stderr = original_stderr 
+        root = tk.Tk()
+        app = KwaiTool(root)
+        app.load_accounts()  # 加载账号列表
+        root.mainloop()
+    except Exception as e:
+        print(f"程序启动失败: {e}")
+        traceback.print_exc()
+        
+        # 在控制台模式下显示错误
+        if not hasattr(sys, "frozen"):
+            input("按Enter键退出...") 
