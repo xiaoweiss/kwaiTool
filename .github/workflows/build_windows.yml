@@ -53,18 +53,35 @@ jobs:
         run: |
           echo "检查当前目录内容..."
           dir
-          echo "检查kwai_tool.spec文件是否存在..."
-          if (Test-Path -Path "kwai_tool.spec") { 
-            echo "kwai_tool.spec 文件存在"
-            echo "文件内容前10行:"
-            Get-Content -Path "kwai_tool.spec" -Head 10 
+
+          echo "检查main.py文件是否存在..."
+          if (Test-Path -Path "main.py") { 
+            echo "main.py 文件存在，直接使用main.py构建应用" 
           } 
           else { 
-            echo "错误: kwai_tool.spec 文件不存在!" 
+            echo "错误: main.py 文件不存在!" 
+            exit 1
           }
 
           echo "开始构建应用..."
-          pyinstaller --noconfirm kwai_tool.spec
+          # 直接使用main.py构建应用，添加必要的隐藏导入和数据文件
+          pyinstaller --name "快手账号管理工具" --onefile --windowed --icon=app_icon.ico `
+            --hidden-import selenium.webdriver.common.by `
+            --hidden-import selenium.webdriver.support.ui `
+            --hidden-import selenium.webdriver.support.expected_conditions `
+            --hidden-import selenium.webdriver.chrome.options `
+            --hidden-import selenium.webdriver.common.action_chains `
+            --hidden-import websockets `
+            --hidden-import schedule `
+            --hidden-import tzlocal `
+            --hidden-import pytz `
+            --hidden-import curl_helper `
+            --hidden-import requests `
+            --hidden-import playwright `
+            --hidden-import playwright.sync_api `
+            --hidden-import tkinter.filedialog `
+            --add-data "curl_config.json;." `
+            main.py
 
           echo "构建完成，检查dist目录:"
           dir dist
