@@ -129,14 +129,15 @@ jobs:
       - name: 打包构建产物
         run: |
           cd dist
-          powershell Compress-Archive -Path "快手账号管理工具.exe" -DestinationPath "快手账号管理工具-Windows.zip"
+          # 使用英文文件名以避免编码问题
+          powershell Compress-Archive -Path "快手账号管理工具.exe" -DestinationPath "KwaiAccountManager-Windows.zip"
           cd ..
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: 快手账号管理工具-Windows
-          path: dist/快手账号管理工具-Windows.zip
+          name: KwaiAccountManager-Windows
+          path: dist/KwaiAccountManager-Windows.zip
           retention-days: 7
 
   # 创建发布版本（仅在打标签时）
@@ -148,14 +149,14 @@ jobs:
       - name: 获取Windows构建产物
         uses: actions/download-artifact@v4
         with:
-          name: 快手账号管理工具-Windows
+          name: KwaiAccountManager-Windows
           path: ./
 
       - name: 创建Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            快手账号管理工具-Windows.zip
+            KwaiAccountManager-Windows.zip
           draft: false
           prerelease: false
           generate_release_notes: true
