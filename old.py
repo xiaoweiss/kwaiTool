@@ -680,4 +680,4 @@ if __name__ == "__main__":
         # 恢复stderr
         if platform.system() == 'Darwin':
             sys.stderr.close()
-            sys.stderr = original_stderr 
+            sys.stderr = original_stderr

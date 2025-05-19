@@ -46,7 +46,7 @@ class CurlHelper:
                 "timeout": 30,
                 "endpoints": {
                     "login": "/login",
-                    "account": "/account"
+                    "account": "/index.php/admin/Dashboard/account"
                 }
             }
             
