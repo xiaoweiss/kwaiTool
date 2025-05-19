@@ -28,14 +28,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller==5.13.0 pillow==10.0.0
-          pip install requests playwright selenium pytz tzlocal schedule
+          pip install requests playwright pytz tzlocal schedule
 
           # 显式安装UI框架 (根据项目需要选择)
           pip install pyqt5
 
-          # 显式安装Playwright浏览器
-          python -m playwright install chromium
-          python -m playwright install-deps chromium
+          # 不安装Playwright浏览器，因为用户会自己选择浏览器
+          # python -m playwright install chromium
+          # python -m playwright install-deps chromium
 
       - name: 打印环境信息
         run: |
@@ -82,8 +82,26 @@ jobs:
           }
 
           echo "开始构建应用..."
-          # 构建基本命令
-          $BUILD_CMD = "pyinstaller --name `"快手账号管理工具`" --onefile --windowed"
+          # 构建基本命令 - 优化打包大小
+          $BUILD_CMD = "pyinstaller --name `"快手账号管理工具`" --onefile --windowed --clean"
+
+          # 设置环境变量，防止Playwright自动下载浏览器
+          $Env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = 1
+
+          # 排除不必要的大型模块和包
+          $BUILD_CMD += " --exclude-module matplotlib"
+          $BUILD_CMD += " --exclude-module pandas"
+          $BUILD_CMD += " --exclude-module PIL"
+          $BUILD_CMD += " --exclude-module numpy"
+          $BUILD_CMD += " --exclude-module tkinter"
+          $BUILD_CMD += " --exclude-module PyQt6"
+          $BUILD_CMD += " --exclude-module PySide6"
+          # 排除Selenium相关模块
+          $BUILD_CMD += " --exclude-module selenium"
+          $BUILD_CMD += " --exclude-module webdriver_manager"
+
+          # 使用noupx避免UPX压缩导致的问题
+          $BUILD_CMD += " --noupx"
 
           # 添加可选参数
           if ($ICON_PARAM) {
@@ -93,21 +111,11 @@ jobs:
             $BUILD_CMD += " $DATA_PARAM"
           }
 
-          # 添加必需的隐藏导入
-          $BUILD_CMD += " --hidden-import selenium.webdriver.common.by"
-          $BUILD_CMD += " --hidden-import selenium.webdriver.support.ui"
-          $BUILD_CMD += " --hidden-import selenium.webdriver.support.expected_conditions"
-          $BUILD_CMD += " --hidden-import selenium.webdriver.chrome.options"
-          $BUILD_CMD += " --hidden-import selenium.webdriver.common.action_chains"
-          $BUILD_CMD += " --hidden-import websockets"
-          $BUILD_CMD += " --hidden-import schedule"
-          $BUILD_CMD += " --hidden-import tzlocal"
-          $BUILD_CMD += " --hidden-import pytz"
+          # 添加必需的隐藏导入 - 仅保留必要的，移除Selenium相关的导入
           $BUILD_CMD += " --hidden-import curl_helper"
           $BUILD_CMD += " --hidden-import requests"
-          $BUILD_CMD += " --hidden-import playwright"
           $BUILD_CMD += " --hidden-import playwright.sync_api"
-          $BUILD_CMD += " --hidden-import tkinter.filedialog"
+
           $BUILD_CMD += " main.py"
 
           echo "执行构建命令: $BUILD_CMD"
@@ -115,6 +123,8 @@ jobs:
 
           echo "构建完成，检查dist目录:"
           dir dist
+          echo "检查可执行文件大小:"
+          Get-Item dist/快手账号管理工具.exe | Select-Object Name, Length, @{Name="SizeInMB";Expression={"{0:N2} MB" -f ($_.Length / 1MB)}}
 
       - name: 打包构建产物
         run: |
