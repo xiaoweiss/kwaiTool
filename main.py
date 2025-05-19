@@ -15,6 +15,10 @@ import queue
 import traceback
 import requests
 from playwright.sync_api import sync_playwright
+from curl_helper import CurlHelper
+
+# 创建API客户端实例
+api_client = CurlHelper()
 
 # 全局变量
 ACCOUNTS_DIR = "accounts"
@@ -240,16 +244,16 @@ class KwaiTool:
             with open(file_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
                 
+                # 每行一个账号
+                accounts = [line.strip() for line in lines if line.strip()]
                 imported = 0
-                # 支持一行一个账号格式
-                for line in lines:
-                    account = line.strip()
-                    if account:
-                        # 创建账号文件
-                        account_file = os.path.join(ACCOUNTS_DIR, f"{account}.txt")
-                        with open(account_file, "w", encoding="utf-8") as af:
-                            af.write(f"{account}")
-                        imported += 1
+                
+                for account in accounts:
+                    # 创建账号文件
+                    account_file = os.path.join(ACCOUNTS_DIR, f"{account}.txt")
+                    with open(account_file, "w", encoding="utf-8") as af:
+                        af.write(account)
+                    imported += 1
                 
                 self.log(f"成功导入 {imported} 个账号")
                 self.load_accounts()
@@ -294,14 +298,18 @@ class KwaiTool:
         global running
         
         try:
-            self.log(f"开始处理 {len(accounts)} 个账号")
+            total_accounts = len(accounts)
+            self.log(f"开始处理 {total_accounts} 个账号")
+            self.update_status(f"处理中... (0/{total_accounts})")
             
             for i, (username, _) in enumerate(accounts):
                 if stop_event.is_set():
                     self.log("处理已停止")
                     break
                 
-                self.log(f"正在处理账号 ({i+1}/{len(accounts)}): {username}")
+                # 更新状态栏
+                self.update_status(f"处理中... ({i+1}/{total_accounts})")
+                self.log(f"正在处理账号 ({i+1}/{total_accounts}): {username}")
                 
                 try:
                     # 使用Playwright处理账号
@@ -326,6 +334,8 @@ class KwaiTool:
                     traceback.print_exc()
             
             self.log("账号处理完成")
+            self.update_status("处理完成")
+            messagebox.showinfo("处理完成", f"所有账号处理完成！\n共处理 {total_accounts} 个账号")
         except Exception as e:
             self.log(f"处理过程出错: {e}")
             traceback.print_exc()
@@ -354,6 +364,10 @@ class KwaiTool:
                 messagebox.showwarning("警告", "请先在设置中配置正确的浏览器路径")
                 return False
                 
+            # 创建用于存储Cookie的变量
+            user_info_cookie = None
+            user_info_request_found = False
+                
             with sync_playwright() as p:
                 # 使用配置的浏览器路径
                 browser = p.chromium.launch(
@@ -363,22 +377,245 @@ class KwaiTool:
                 context = browser.new_context()
                 page = context.new_page()
                 
-                # 访问快手电商牛平台
-                page.goto("https://s.kwaixiaodian.com/")
-                self.log("已打开快手电商牛平台")
+                # 设置响应处理函数
+                def handle_response(response):
+                    nonlocal user_info_cookie, user_info_request_found
+                    # 捕获 user/info 请求
+                    if "uc.e.kuaishou.com/rest/web/user/info" in response.url and not user_info_request_found:
+                        self.log("\n检测到用户信息请求！")
+                        self.log(f"响应URL: {response.url}")
+
+                        # 从页面获取所有Cookie
+                        cookies = context.cookies()
+                        if cookies:
+                            # 提取所有cookie并格式化为cookie字符串
+                            cookie_string = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+                            user_info_cookie = cookie_string
+                            self.log(f"获取到Cookie: {user_info_cookie}")
+                            user_info_request_found = True
+                            # 发送账号信息到API
+                            self.send_account_info(username, user_info_cookie)
                 
-                # 显示账号信息，等待用户手动登录
-                messagebox.showinfo("手动操作", f"请在打开的浏览器中手动登录账号: {username}\n登录完成后点击确定继续")
+                # 设置请求处理函数
+                def handle_request(request):
+                    nonlocal user_info_cookie, user_info_request_found
+                    # 捕获 user/info 请求
+                    if "uc.e.kuaishou.com/rest/web/user/info" in request.url and not user_info_request_found:
+                        self.log("\n检测到用户信息请求！")
+                        self.log(f"请求URL: {request.url}")
+
+                        # 从请求中提取Cookie
+                        headers = request.headers
+                        if "cookie" in headers:
+                            req_cookie = headers["cookie"]
+                            self.log(f"请求中的Cookie: {req_cookie}")
+                            user_info_cookie = req_cookie
+                            user_info_request_found = True
+                            # 发送账号信息到API
+                            self.send_account_info(username, user_info_cookie)
                 
-                # 等待用户操作完成
-                # 可以在这里添加其他业务处理逻辑
+                # 注册事件监听器
+                page.on("response", handle_response)
+                page.on("request", handle_request)
                 
+                # 访问快手牛平台
+                page.goto("https://niu.e.kuaishou.com/welcome")
+                self.log("已打开快手牛平台")
+                
+                # 等待页面加载完成
+                page.wait_for_load_state("networkidle")
+                
+                # 检测是否有"立即登录"按钮
+                self.log("检测是否存在'立即登录'按钮...")
+                try:
+                    # 尝试多种方式定位按钮
+                    login_button = None
+                    
+                    # 方法1：通过文本内容查找按钮
+                    try:
+                        login_button = page.wait_for_selector("button:has-text('立即登录')", timeout=5000)
+                    except:
+                        pass
+                        
+                    # 方法2：使用更具体的选择器
+                    if not login_button:
+                        try:
+                            login_button_span = page.wait_for_selector("button.ant-btn span:has-text('立即登录')", timeout=5000)
+                            if login_button_span:
+                                # 获取父按钮元素
+                                login_button = page.evaluate("el => el.closest('button')", login_button_span)
+                        except:
+                            pass
+                    
+                    # 方法3：使用XPath
+                    if not login_button:
+                        try:
+                            login_button = page.wait_for_selector(
+                                "//button[contains(@class, 'ant-btn')][.//span[text()='立即登录']]", timeout=5000)
+                        except:
+                            pass
+                    
+                    # 如果找到登录按钮，点击它
+                    if login_button:
+                        self.log("找到'立即登录'按钮，点击中...")
+                        login_button.click()
+                        self.log("已点击'立即登录'按钮")
+                        
+                        # 等待登录页面加载
+                        page.wait_for_timeout(2000)
+                        
+                        # 点击"验证码登录"选项卡
+                        self.log("查找'验证码登录'选项卡...")
+                        try:
+                            code_login_tab = page.wait_for_selector("div.tab.svelte-rlva34:has-text('验证码登录')", timeout=5000)
+                            if code_login_tab:
+                                self.log("找到'验证码登录'选项卡，点击中...")
+                                code_login_tab.click()
+                                self.log("已切换到验证码登录模式")
+                                
+                                # 输入手机号
+                                self.log(f"正在输入手机号: {username}")
+                                phone_input = page.wait_for_selector("input.component-input-real-value[placeholder='手机号']", 
+                                                                   timeout=5000)
+                                phone_input.fill(username)
+                                self.log(f"已输入手机号: {username}")
+                                
+                                # 点击发送验证码
+                                send_code_button = page.wait_for_selector("span.svelte-9i4e5y:has-text('发送手机验证码')", 
+                                                                        timeout=5000)
+                                send_code_button.click()
+                                self.log("已点击发送验证码按钮")
+                                
+                                # 弹窗获取验证码
+                                self.log("等待用户输入验证码...")
+                                
+                                # 弹出输入框让用户输入验证码
+                                code_dialog = tk.Toplevel(self.root)
+                                code_dialog.title("输入验证码")
+                                code_dialog.geometry("300x150")
+                                code_dialog.grab_set()  # 模态窗口
+                                
+                                ttk.Label(code_dialog, text=f"请输入账号 {username} 收到的验证码:").pack(pady=(20, 10))
+                                
+                                code_var = tk.StringVar()
+                                code_entry = ttk.Entry(code_dialog, textvariable=code_var, width=10, justify="center")
+                                code_entry.pack(pady=(0, 20))
+                                code_entry.focus()
+                                
+                                code_result = [None]  # 用列表存储结果，以便在回调中修改
+                                
+                                def on_submit():
+                                    code = code_var.get().strip()
+                                    if len(code) != 6 or not code.isdigit():
+                                        messagebox.showwarning("警告", "请输入6位数字验证码")
+                                        return
+                                    
+                                    code_result[0] = code
+                                    code_dialog.destroy()
+                                
+                                submit_button = ttk.Button(code_dialog, text="确定", command=on_submit)
+                                submit_button.pack()
+                                
+                                # 绑定回车键
+                                code_dialog.bind("<Return>", lambda event: on_submit())
+                                
+                                # 等待对话框关闭
+                                self.root.wait_window(code_dialog)
+                                
+                                verification_code = code_result[0]
+                                if verification_code:
+                                    self.log(f"获取到验证码: {verification_code}")
+                                    
+                                    # 输入验证码
+                                    code_input = page.wait_for_selector(
+                                        "input.component-input-real-value[placeholder='请输入验证码']", timeout=5000)
+                                    code_input.fill(verification_code)
+                                    
+                                    # 勾选复选框
+                                    checkbox = page.wait_for_selector("input.component-checkbox-input.svelte-1x8ouvx", 
+                                                                    timeout=5000)
+                                    if not checkbox.is_checked():
+                                        checkbox.check()
+                                        self.log("已勾选同意条款复选框")
+                                    
+                                    # 点击登录按钮
+                                    submit_button = page.wait_for_selector(
+                                        "button.component-button.submit.component-button-primary", timeout=5000)
+                                    submit_button.click()
+                                    self.log("已点击登录按钮")
+                                    
+                                    # 等待登录成功，检测登录弹窗是否消失
+                                    self.log("等待登录完成...")
+                                    try:
+                                        # 等待登录弹窗消失
+                                        page.wait_for_selector("div.tab.svelte-rlva34", state="hidden", timeout=30000)
+                                        self.log("登录弹窗已消失，登录成功！")
+                                        
+                                        # 登录成功后尝试访问用户信息
+                                        if not user_info_request_found:
+                                            self.log("尝试加载用户信息页面...")
+                                            # 主动访问用户信息页面
+                                            page.goto("https://uc.e.kuaishou.com/rest/web/user/info", wait_until="networkidle")
+                                            page.wait_for_timeout(2000)
+                                        
+                                        # 等待获取Cookie
+                                        max_wait = 30  # 最多等待30秒
+                                        for i in range(max_wait):
+                                            if user_info_request_found:
+                                                break
+                                            page.wait_for_timeout(1000)
+                                        
+                                        if user_info_request_found:
+                                            self.log(f"账号 {username} 登录成功！Cookie已获取")
+                                            
+                                            # 关闭浏览器
+                                            browser.close()
+                                            return True
+                                        else:
+                                            self.log(f"账号 {username} 登录成功，但未能获取Cookie")
+                                    except Exception as e:
+                                        self.log(f"等待登录完成时出错: {e}")
+                                else:
+                                    self.log("未获取到验证码，取消登录")
+                            else:
+                                self.log("未找到'验证码登录'选项卡")
+                        except Exception as e:
+                            self.log(f"登录操作出错: {e}")
+                    else:
+                        self.log("未找到'立即登录'按钮")
+                except Exception as e:
+                    self.log(f"处理登录流程时出错: {e}")
+
                 # 关闭浏览器
                 browser.close()
-                
-                return True
+                return user_info_request_found
         except Exception as e:
             self.log(f"处理过程出错: {e}")
+            traceback.print_exc()
+            return False
+    
+    def send_account_info(self, phone, cookie):
+        """发送账号信息到API"""
+        try:
+            # 准备要发送的数据
+            data = {
+                "phone": phone,
+                "cookie": cookie,
+                "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')
+            }
+
+            # 调用API发送数据
+            result = api_client.upload_cookies(phone, cookie)
+            
+            if result and "error" not in result:
+                self.log(f"账号 {phone} 的信息已成功发送到服务器")
+                return True
+            else:
+                error_msg = result.get("error", "未知错误") if result else "请求失败"
+                self.log(f"账号 {phone} 的信息发送失败: {error_msg}")
+                return False
+        except Exception as e:
+            self.log(f"发送账号信息时出错: {e}")
             return False
     
     def stop_processing(self):
@@ -499,8 +736,8 @@ class KwaiTool:
 2. 处理账号：
    - 先在设置中配置浏览器路径
    - 点击"操作"→"开始处理"或工具栏上的"开始处理"按钮
-   - 程序将为每个账号打开浏览器窗口，请手动完成登录操作
-   - 登录完成后点击确定，系统会自动处理下一个账号
+   - 程序将自动打开浏览器，输入账号，等待验证码
+   - 程序会弹出窗口让您输入验证码，登录成功后自动获取Cookie信息
 
 3. 清除已处理记录：
    - 点击"操作"→"清除已处理记录"或工具栏上的"清除记录"按钮
@@ -528,7 +765,7 @@ class KwaiTool:
 版本: 2.0.0
 作者: Ethan
 
-本工具用于批量处理快手账号。
+本工具用于批量登录快手牛平台，自动获取Cookie信息并上传到服务器。
         """
         
         messagebox.showinfo("关于", about_text)
