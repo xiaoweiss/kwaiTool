@@ -153,13 +153,67 @@ class CurlHelper:
         
         try:
             # 尝试发送请求
-            return self.post(
-                "account",
-                json_data=data
-            )
+            try:
+                return self.post(
+                    "account",
+                    json_data=data
+                )
+            except Exception as ssl_error:
+                # 如果出现SSL错误，尝试使用备用方法（不依赖SSL模块）
+                print(f"标准请求失败: {ssl_error}，尝试使用备用方法...")
+                return self.fallback_post(url, data)
         except Exception as e:
             print(f"请求发送失败: {e}")
             return {"error": f"请求失败: {str(e)}"}
+    
+    def fallback_post(self, url, json_data):
+        """备用POST请求方法，不依赖SSL模块"""
+        import urllib.request
+        import urllib.error
+        import urllib.parse
+        
+        # 将HTTPS改为HTTP尝试请求
+        if url.startswith("https://"):
+            fallback_url = "http://" + url[8:]
+            print(f"尝试使用HTTP请求: {fallback_url}")
+        else:
+            fallback_url = url
+            
+        try:
+            # 准备请求数据
+            data = json.dumps(json_data).encode('utf-8')
+            headers = self.default_headers.copy()
+            headers['Content-Type'] = 'application/json'
+            
+            # 创建请求
+            req = urllib.request.Request(
+                fallback_url,
+                data=data,
+                headers=headers,
+                method='POST'
+            )
+            
+            # 发送请求
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                response_data = response.read().decode('utf-8')
+                try:
+                    return {
+                        "status_code": response.status,
+                        "data": json.loads(response_data) if response_data else {},
+                        "headers": dict(response.headers)
+                    }
+                except json.JSONDecodeError:
+                    return {
+                        "status_code": response.status,
+                        "text": response_data,
+                        "headers": dict(response.headers)
+                    }
+        except urllib.error.URLError as e:
+            print(f"备用请求失败: {e}")
+            return {"error": f"备用请求失败: {str(e)}"}
+        except Exception as e:
+            print(f"备用请求过程中出错: {e}")
+            return {"error": f"备用请求错误: {str(e)}"}
 
 # 测试代码
 if __name__ == "__main__":
