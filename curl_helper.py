@@ -166,3 +166,5 @@ if __name__ == "__main__":
     api = CurlHelper()
     print(f"已加载API配置: {api.base_url}")
     print(f"可用端点: {list(api.endpoints.keys())}") 
+    
+# 添加此行以触发GitHub重新打包，解决SSL模块问题 
