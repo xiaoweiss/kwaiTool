@@ -93,12 +93,22 @@ jobs:
           $BUILD_CMD += " --exclude-module pandas"
           $BUILD_CMD += " --exclude-module PIL"
           $BUILD_CMD += " --exclude-module numpy"
-          $BUILD_CMD += " --exclude-module tkinter"
+          # 不排除tkinter，因为应用依赖它
+          # $BUILD_CMD += " --exclude-module tkinter"
           $BUILD_CMD += " --exclude-module PyQt6"
           $BUILD_CMD += " --exclude-module PySide6"
           # 排除Selenium相关模块
           $BUILD_CMD += " --exclude-module selenium"
           $BUILD_CMD += " --exclude-module webdriver_manager"
+
+          # 进一步优化体积的选项
+          $BUILD_CMD += " --strip"  # 去除符号表和调试信息
+          $BUILD_CMD += " --collect-submodules playwright"  # 只收集实际使用的playwright子模块
+
+          # 更精细地排除大型库中不需要的部分
+          $BUILD_CMD += " --exclude-module unittest"
+          $BUILD_CMD += " --exclude-module test"
+          $BUILD_CMD += " --exclude-module distutils" 
 
           # 使用noupx避免UPX压缩导致的问题
           $BUILD_CMD += " --noupx"
@@ -115,6 +125,8 @@ jobs:
           $BUILD_CMD += " --hidden-import curl_helper"
           $BUILD_CMD += " --hidden-import requests"
           $BUILD_CMD += " --hidden-import playwright.sync_api"
+          $BUILD_CMD += " --hidden-import tkinter"
+          $BUILD_CMD += " --hidden-import tkinter.filedialog"
 
           $BUILD_CMD += " main.py"
 
