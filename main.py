@@ -604,6 +604,10 @@ class KwaiTool:
                 "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')
             }
 
+            # 获取并打印API端点地址
+            endpoint_url = api_client.get_endpoint_url("account")
+            self.log(f"正在发送数据到API地址: {endpoint_url}")
+
             # 调用API发送数据
             result = api_client.upload_cookies(phone, cookie)
             
@@ -616,6 +620,7 @@ class KwaiTool:
                 return False
         except Exception as e:
             self.log(f"发送账号信息时出错: {e}")
+            traceback.print_exc()
             return False
     
     def stop_processing(self):
@@ -765,7 +770,7 @@ class KwaiTool:
 版本: 2.0.0
 作者: Ethan
 
-本工具用于批量登录快手牛平台，自动获取Cookie信息并上传到服务器。
+本工具用于批量登录快手牛平台。
         """
         
         messagebox.showinfo("关于", about_text)

@@ -17,13 +17,28 @@ class CurlHelper:
         self.default_headers = self.config.get("default_headers", {})
         self.timeout = self.config.get("timeout", 30)
         self.endpoints = self.config.get("endpoints", {})
+        
+        # 打印配置信息
+        print("\n=== API客户端配置信息 ===")
+        print(f"配置文件: {config_file}")
+        print(f"基础URL: {self.base_url}")
+        print(f"API端点: {self.endpoints}")
+        print(f"超时设置: {self.timeout}秒")
+        print(f"默认请求头: {self.default_headers}")
+        print("=== SSL相关信息 ===")
+        try:
+            import ssl
+            print(f"SSL模块可用: {ssl.OPENSSL_VERSION}")
+        except ImportError:
+            print("SSL模块不可用，请检查Python环境")
+        print("=========================\n")
     
     def load_config(self, config_file):
         """加载配置文件"""
         if not os.path.exists(config_file):
             # 创建默认配置
             default_config = {
-                "base_url": "https://api.example.com",
+                "base_url": "https://kwaiTool.zhongle88.cn",
                 "default_headers": {
                     "Content-Type": "application/json",
                     "User-Agent": "KwaiTool/1.0"
@@ -123,14 +138,28 @@ class CurlHelper:
     def upload_cookies(self, account, cookies):
         """上传账号Cookie到API"""
         timestamp = time.time()
-        return self.post(
-            "account",
-            json_data={
-                "account": account,
-                "cookies": cookies,
-                "timestamp": timestamp
-            }
-        )
+        
+        # 获取完整的API端点URL
+        url = self.get_endpoint_url("account")
+        print(f"正在发送请求到: {url}")
+        
+        # 准备发送的数据
+        data = {
+            "account": account,
+            "cookies": cookies,
+            "timestamp": timestamp
+        }
+        print(f"请求数据: {json.dumps(data, ensure_ascii=False)[:100]}...")  # 只打印前100个字符
+        
+        try:
+            # 尝试发送请求
+            return self.post(
+                "account",
+                json_data=data
+            )
+        except Exception as e:
+            print(f"请求发送失败: {e}")
+            return {"error": f"请求失败: {str(e)}"}
 
 # 测试代码
 if __name__ == "__main__":
