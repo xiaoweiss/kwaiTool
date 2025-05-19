@@ -38,7 +38,7 @@ class CurlHelper:
         if not os.path.exists(config_file):
             # 创建默认配置
             default_config = {
-                "base_url": "https://kwaiTool.zhongle88.cn",
+                "base_url": "http://kwaiTool.zhongle88.cn",
                 "default_headers": {
                     "Content-Type": "application/json",
                     "User-Agent": "KwaiTool/1.0"
