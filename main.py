@@ -18,7 +18,6 @@ from playwright.sync_api import sync_playwright
 
 # 全局变量
 ACCOUNTS_DIR = "accounts"
-CONFIG_FILE = "curl_config.json"
 PROCESSED_FILE = "processed_accounts.json"
 running = False
 stop_event = threading.Event()
@@ -36,31 +35,6 @@ if os.path.exists(PROCESSED_FILE):
             processed_accounts = json.load(f)
     except Exception as e:
         print(f"加载已处理账号失败: {e}")
-
-# 加载配置
-config = {}
-if os.path.exists(CONFIG_FILE):
-    try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            config = json.load(f)
-    except Exception as e:
-        print(f"加载配置失败: {e}")
-else:
-    # 创建默认配置
-    config = {
-        "base_url": "https://api.example.com",
-        "default_headers": {
-            "Content-Type": "application/json",
-            "User-Agent": "KwaiTool/1.0"
-        },
-        "timeout": 30,
-        "endpoints": {
-            "login": "/login",
-            "account": "/account"
-        }
-    }
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
 
 class KwaiTool:
     def __init__(self, root):
@@ -109,7 +83,6 @@ class KwaiTool:
         # 文件菜单
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="导入账号", command=self.import_accounts)
-        file_menu.add_command(label="导出Cookies", command=self.export_cookies)
         file_menu.add_separator()
         file_menu.add_command(label="退出", command=self.on_closing)
         menubar.add_cascade(label="文件", menu=file_menu)
@@ -124,7 +97,6 @@ class KwaiTool:
         
         # 设置菜单
         settings_menu = tk.Menu(menubar, tearoff=0)
-        settings_menu.add_command(label="API配置", command=self.edit_config)
         settings_menu.add_command(label="浏览器设置", command=self.browser_settings)
         menubar.add_cascade(label="设置", menu=settings_menu)
         
@@ -145,7 +117,6 @@ class KwaiTool:
         ttk.Button(toolbar, text="开始处理", command=self.start_processing).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="停止处理", command=self.stop_processing).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="清除记录", command=self.clear_processed).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="导出Cookies", command=self.export_cookies).pack(side=tk.LEFT, padx=2)
     
     def create_main_ui(self):
         """创建主界面"""
@@ -237,9 +208,8 @@ class KwaiTool:
                 try:
                     with open(os.path.join(ACCOUNTS_DIR, file), "r", encoding="utf-8") as f:
                         lines = f.readlines()
-                        if len(lines) >= 2:
+                        if lines:
                             username = lines[0].strip()
-                            password = lines[1].strip()
                             
                             # 检查是否已处理
                             status = "未处理"
@@ -248,7 +218,7 @@ class KwaiTool:
                                 status = "已处理"
                                 update_time = processed_accounts[username].get("time", "")
                             
-                            self.accounts_tree.insert("", tk.END, values=(username, password, status, update_time))
+                            self.accounts_tree.insert("", tk.END, values=(username, "", status, update_time))
                 except Exception as e:
                     self.log(f"加载账号文件 {file} 失败: {e}")
             
@@ -271,17 +241,15 @@ class KwaiTool:
                 lines = f.readlines()
                 
                 imported = 0
-                for i in range(0, len(lines), 2):
-                    if i + 1 < len(lines):
-                        username = lines[i].strip()
-                        password = lines[i + 1].strip()
-                        
-                        if username and password:
-                            # 创建账号文件
-                            account_file = os.path.join(ACCOUNTS_DIR, f"{username}.txt")
-                            with open(account_file, "w", encoding="utf-8") as af:
-                                af.write(f"{username}\n{password}")
-                            imported += 1
+                # 支持一行一个账号格式
+                for line in lines:
+                    account = line.strip()
+                    if account:
+                        # 创建账号文件
+                        account_file = os.path.join(ACCOUNTS_DIR, f"{account}.txt")
+                        with open(account_file, "w", encoding="utf-8") as af:
+                            af.write(f"{account}")
+                        imported += 1
                 
                 self.log(f"成功导入 {imported} 个账号")
                 self.load_accounts()
@@ -328,7 +296,7 @@ class KwaiTool:
         try:
             self.log(f"开始处理 {len(accounts)} 个账号")
             
-            for i, (username, password) in enumerate(accounts):
+            for i, (username, _) in enumerate(accounts):
                 if stop_event.is_set():
                     self.log("处理已停止")
                     break
@@ -336,19 +304,13 @@ class KwaiTool:
                 self.log(f"正在处理账号 ({i+1}/{len(accounts)}): {username}")
                 
                 try:
-                    # 使用Playwright登录并获取Cookie
-                    cookies = self.login_and_get_cookies(username, password)
+                    # 使用Playwright处理账号
+                    result = self.process_account(username)
                     
-                    if cookies:
-                        # 保存Cookie
-                        cookie_file = os.path.join(ACCOUNTS_DIR, f"{username}_cookies.json")
-                        with open(cookie_file, "w", encoding="utf-8") as f:
-                            json.dump(cookies, f, indent=2, ensure_ascii=False)
-                        
+                    if result:
                         # 更新已处理记录
                         processed_accounts[username] = {
-                            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-                            "cookie_file": cookie_file
+                            "time": time.strftime("%Y-%m-%d %H:%M:%S")
                         }
                         
                         # 保存已处理记录
@@ -357,7 +319,7 @@ class KwaiTool:
                         
                         self.log(f"账号 {username} 处理成功")
                     else:
-                        self.log(f"账号 {username} 登录失败")
+                        self.log(f"账号 {username} 处理失败")
                 
                 except Exception as e:
                     self.log(f"处理账号 {username} 时出错: {e}")
@@ -374,11 +336,30 @@ class KwaiTool:
             # 刷新账号列表
             self.root.after(0, self.load_accounts)
     
-    def login_and_get_cookies(self, username, password):
-        """使用Playwright登录并获取Cookie"""
+    def process_account(self, username):
+        """使用Playwright处理单个账号"""
         try:
+            # 读取浏览器配置
+            browser_path = None
+            if os.path.exists("config.json"):
+                try:
+                    with open("config.json", "r", encoding="utf-8") as f:
+                        config_data = json.load(f)
+                        browser_path = config_data.get("chrome_path")
+                except Exception as e:
+                    self.log(f"加载浏览器配置失败: {e}")
+            
+            if not browser_path or not os.path.exists(browser_path):
+                # 如果没有配置浏览器路径或路径不存在，提示用户配置
+                messagebox.showwarning("警告", "请先在设置中配置正确的浏览器路径")
+                return False
+                
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
+                # 使用配置的浏览器路径
+                browser = p.chromium.launch(
+                    headless=False,  # 非无头模式，方便用户手动操作
+                    executable_path=browser_path
+                )
                 context = browser.new_context()
                 page = context.new_page()
                 
@@ -386,29 +367,19 @@ class KwaiTool:
                 page.goto("https://s.kwaixiaodian.com/")
                 self.log("已打开快手电商牛平台")
                 
-                # 等待登录页面加载
-                page.wait_for_selector("input[name='username']", timeout=30000)
+                # 显示账号信息，等待用户手动登录
+                messagebox.showinfo("手动操作", f"请在打开的浏览器中手动登录账号: {username}\n登录完成后点击确定继续")
                 
-                # 输入用户名和密码
-                page.fill("input[name='username']", username)
-                page.fill("input[name='password']", password)
-                
-                # 点击登录按钮
-                page.click("button[type='submit']")
-                
-                # 等待登录成功
-                page.wait_for_url("**/dashboard*", timeout=60000)
-                
-                # 获取所有Cookie
-                cookies = context.cookies()
+                # 等待用户操作完成
+                # 可以在这里添加其他业务处理逻辑
                 
                 # 关闭浏览器
                 browser.close()
                 
-                return cookies
+                return True
         except Exception as e:
-            self.log(f"登录过程出错: {e}")
-            return None
+            self.log(f"处理过程出错: {e}")
+            return False
     
     def stop_processing(self):
         """停止处理账号"""
@@ -432,81 +403,89 @@ class KwaiTool:
             self.log("已清除所有处理记录")
             self.load_accounts()
     
-    def export_cookies(self):
-        """导出所有Cookies"""
-        if not processed_accounts:
-            messagebox.showinfo("提示", "没有已处理的账号")
-            return
+    def browser_settings(self):
+        """浏览器设置"""
+        # 创建配置窗口
+        browser_window = tk.Toplevel(self.root)
+        browser_window.title("浏览器设置")
+        browser_window.geometry("600x150")
+        browser_window.grab_set()  # 模态窗口
         
-        export_dir = filedialog.askdirectory(title="选择导出目录")
-        if not export_dir:
-            return
+        # 创建表单
+        form_frame = ttk.Frame(browser_window, padding="10")
+        form_frame.pack(fill=tk.BOTH, expand=True)
         
-        try:
-            exported = 0
-            for username, data in processed_accounts.items():
-                cookie_file = data.get("cookie_file")
-                if cookie_file and os.path.exists(cookie_file):
-                    # 读取Cookie文件
-                    with open(cookie_file, "r", encoding="utf-8") as f:
-                        cookies = json.load(f)
-                    
-                    # 导出到目标目录
-                    export_file = os.path.join(export_dir, f"{username}_cookies.json")
-                    with open(export_file, "w", encoding="utf-8") as f:
-                        json.dump(cookies, f, indent=2, ensure_ascii=False)
-                    
-                    exported += 1
-            
-            self.log(f"成功导出 {exported} 个账号的Cookies")
-            messagebox.showinfo("导出完成", f"成功导出 {exported} 个账号的Cookies")
-        except Exception as e:
-            self.log(f"导出Cookies失败: {e}")
-            messagebox.showerror("错误", f"导出Cookies失败: {e}")
-    
-    def edit_config(self):
-        """编辑API配置"""
-        # 创建配置编辑窗口
-        config_window = tk.Toplevel(self.root)
-        config_window.title("API配置")
-        config_window.geometry("600x400")
-        config_window.grab_set()  # 模态窗口
+        # 浏览器路径
+        ttk.Label(form_frame, text="浏览器路径:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        browser_path_var = tk.StringVar()
         
-        # 创建文本编辑区
-        config_text = scrolledtext.ScrolledText(config_window, wrap=tk.WORD)
-        config_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # 加载当前配置
-        config_text.insert(tk.END, json.dumps(config, indent=2, ensure_ascii=False))
-        
-        # 创建按钮区域
-        button_frame = ttk.Frame(config_window)
-        button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-        
-        def save_config():
+        # 从配置文件中读取浏览器路径
+        browser_config = {}
+        if os.path.exists("config.json"):
             try:
-                # 获取文本内容并解析JSON
-                new_config = json.loads(config_text.get("1.0", tk.END))
+                with open("config.json", "r", encoding="utf-8") as f:
+                    browser_config = json.load(f)
+                    if "chrome_path" in browser_config:
+                        browser_path_var.set(browser_config["chrome_path"])
+            except Exception as e:
+                self.log(f"加载浏览器配置失败: {e}")
+        
+        browser_entry = ttk.Entry(form_frame, textvariable=browser_path_var, width=50)
+        browser_entry.grid(row=0, column=1, sticky=tk.W+tk.E, pady=5)
+        
+        def browse_browser():
+            path = filedialog.askopenfilename(
+                title="选择浏览器可执行文件",
+                filetypes=[
+                    ("浏览器可执行文件", "*.exe") if platform.system() == "Windows" 
+                    else ("所有文件", "*.*")
+                ]
+            )
+            if path:
+                browser_path_var.set(path)
+        
+        browse_button = ttk.Button(form_frame, text="浏览...", command=browse_browser)
+        browse_button.grid(row=0, column=2, padx=5, pady=5)
+        
+        # 保存按钮
+        def save_browser_config():
+            browser_path = browser_path_var.get().strip()
+            
+            if not browser_path:
+                messagebox.showwarning("警告", "请选择浏览器路径")
+                return
+            
+            if not os.path.exists(browser_path):
+                if not messagebox.askyesno("警告", "指定的浏览器路径不存在，是否继续保存？"):
+                    return
+            
+            # 保存到配置文件
+            if os.path.exists("config.json"):
+                try:
+                    with open("config.json", "r", encoding="utf-8") as f:
+                        config_data = json.load(f)
+                except Exception:
+                    config_data = {}
+            else:
+                config_data = {}
+            
+            config_data["chrome_path"] = browser_path
+            
+            try:
+                with open("config.json", "w", encoding="utf-8") as f:
+                    json.dump(config_data, f, indent=2, ensure_ascii=False)
                 
-                # 保存到配置文件
-                with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                    json.dump(new_config, f, indent=2, ensure_ascii=False)
-                
-                # 更新全局配置
-                global config
-                config = new_config
-                
-                self.log("API配置已更新")
-                config_window.destroy()
+                self.log("浏览器配置已更新")
+                messagebox.showinfo("成功", "浏览器配置已保存")
+                browser_window.destroy()
             except Exception as e:
                 messagebox.showerror("错误", f"保存配置失败: {e}")
         
-        ttk.Button(button_frame, text="保存", command=save_config).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(button_frame, text="取消", command=config_window.destroy).pack(side=tk.RIGHT, padx=5)
-    
-    def browser_settings(self):
-        """浏览器设置"""
-        messagebox.showinfo("浏览器设置", "此功能尚未实现")
+        button_frame = ttk.Frame(browser_window)
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        ttk.Button(button_frame, text="保存", command=save_browser_config).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="取消", command=browser_window.destroy).pack(side=tk.RIGHT, padx=5)
     
     def show_help(self):
         """显示使用说明"""
@@ -515,23 +494,21 @@ class KwaiTool:
 
 1. 导入账号：
    - 点击"文件"→"导入账号"或工具栏上的"导入账号"按钮
-   - 选择包含账号信息的文本文件（每行一个账号，每两行为一组）
+   - 选择包含账号信息的文本文件（每行一个账号）
 
 2. 处理账号：
+   - 先在设置中配置浏览器路径
    - 点击"操作"→"开始处理"或工具栏上的"开始处理"按钮
-   - 程序将自动登录并获取Cookie
+   - 程序将为每个账号打开浏览器窗口，请手动完成登录操作
+   - 登录完成后点击确定，系统会自动处理下一个账号
 
-3. 导出Cookies：
-   - 点击"文件"→"导出Cookies"或工具栏上的"导出Cookies"按钮
-   - 选择导出目录
-
-4. 清除已处理记录：
+3. 清除已处理记录：
    - 点击"操作"→"清除已处理记录"或工具栏上的"清除记录"按钮
    - 这将允许重新处理所有账号
 
-5. API配置：
-   - 点击"设置"→"API配置"
-   - 编辑API相关设置
+4. 浏览器设置：
+   - 点击"设置"→"浏览器设置"
+   - 选择Chrome浏览器的可执行文件路径
         """
         
         help_window = tk.Toplevel(self.root)
@@ -548,10 +525,10 @@ class KwaiTool:
         about_text = """
 快手账号管理工具
 
-版本: 1.0.0
-作者: 快手账号管理团队
+版本: 2.0.0
+作者: Ethan
 
-本工具用于批量登录快手电商牛平台并提取Cookie。
+本工具用于批量处理快手账号。
         """
         
         messagebox.showinfo("关于", about_text)
