@@ -481,14 +481,12 @@ class KwaiTool:
                     submit_button.click()
                     self.log("已点击登录按钮")
                     self.log("等待登录完成...")
-                    try:
-                        page.wait_for_selector("div.tab.svelte-rlva34", state="hidden", timeout=30000)
-                        self.log("登录弹窗已消失，登录成功！")
-                    except Exception as e:
-                        self.log(f"等待登录完成时出错: {e}")
-                        return False
 
-                    # 8. 登录成功，获取cookie
+                    # 登录成功，获取cookie
+                    self.log("登录弹窗已消失，登录成功！")
+                    self.log("等待页面跳转和cookie下发...")
+                    page.wait_for_timeout(3000)  # 等待3秒
+                    # 再获取cookie
                     cookies = context.cookies()
                     if not cookies:
                         self.log("无法获取Cookie，登录可能失败")
@@ -496,43 +494,38 @@ class KwaiTool:
                     cookie_string = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
                     self.log(f"登录后获取到的Cookie: {cookie_string}")
 
-                    # 9. 携带cookie请求owner/info
-                    import requests
+                    # 用 http 请求服务器 info 接口，cookie 放到 body
                     headers = {
-                        "Cookie": cookie_string,
                         "User-Agent": "Mozilla/5.0",
                         "Content-Type": "application/json"
                     }
-                    self.log("使用Python requests发送owner/info请求...")
-                    resp = requests.post(
-                        "https://niu.e.kuaishou.com/rest/esp/owner/info",
-                        headers=headers,
-                        json={}
-                    )
-                    self.log(f"owner/info响应状态码: {resp.status_code}")
-                    self.log(f"owner/info响应内容: {resp.text}")
-
-                    # 10. 解析owner/info响应内容
+                    info_url = api_client.get_endpoint_url("info")
+                    body = {
+                        "cookies": cookie_string
+                    }
+                    self.log(f"请求服务器 info 接口: {info_url}")
                     try:
+                        resp = requests.post(info_url, headers=headers, json=body)
+                        self.log(f"info接口响应状态码: {resp.status_code}")
+                        self.log(f"info接口响应内容: {resp.text}")
                         resp_json = resp.json()
                     except Exception as e:
-                        self.log(f"解析owner/info响应出错: {e}")
+                        self.log(f"请求或解析 info 响应出错: {e}")
                         return False
-
-                    # 11. 判断accountInfos长度
-                    account_infos = resp_json.get('accountInfos', [])
+                    if resp_json.get("code") != 1:
+                        self.log(f"info接口返回失败: {resp_json}")
+                        return False
+                    data = resp_json.get("data", {})
+                    account_infos = data.get('accountInfos', [])
                     if not isinstance(account_infos, list):
                         account_infos = []
                     self.log(f"accountInfos长度: {len(account_infos)}")
                     self.log(f"accountInfos内容: {account_infos}")
-
                     if len(account_infos) == 0:
-                        # 单账户逻辑
                         self.log("检测到单一账号，直接上传cookie")
                         self.send_account_info(username, cookie_string)
                         result = True
                     else:
-                        # 多账户逻辑
                         self.log(f"检测到多个账号，数量: {len(account_infos)}，等待用户选择登录账户")
                         select_dialog = tk.Toplevel(self.root)
                         select_dialog.title("选择登录账号")
