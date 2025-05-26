@@ -501,9 +501,12 @@ class KwaiTool:
                     else:
                         self.log(f"endpoints['info']: {api_client.endpoints['info']}")
                     info_url = api_client.get_endpoint_url("info")
+                    body = {
+                        "cookies": cookie_string
+                    }
                     self.log(f"实际请求的 info_url: {info_url}")
                     try:
-                        resp = requests.post(info_url, headers=headers, json=body)
+                        resp = requests.post(info_url, json=body)
                         self.log(f"info接口响应状态码: {resp.status_code}")
                         self.log(f"info接口响应内容: {resp.text}")
                         resp_json = resp.json()
