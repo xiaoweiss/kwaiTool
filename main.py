@@ -494,16 +494,14 @@ class KwaiTool:
                     cookie_string = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
                     self.log(f"登录后获取到的Cookie: {cookie_string}")
 
-                    # 用 http 请求服务器 info 接口，cookie 放到 body
-                    headers = {
-                        "User-Agent": "Mozilla/5.0",
-                        "Content-Type": "application/json"
-                    }
+                    # 调试：打印 CurlHelper 加载到的 endpoints
+                    self.log(f"当前 CurlHelper endpoints: {api_client.endpoints}")
+                    if "info" not in api_client.endpoints:
+                        self.log("endpoints 中未找到 'info' key，请检查 curl_config.json 配置！")
+                    else:
+                        self.log(f"endpoints['info']: {api_client.endpoints['info']}")
                     info_url = api_client.get_endpoint_url("info")
-                    body = {
-                        "cookies": cookie_string
-                    }
-                    self.log(f"请求服务器 info 接口: {info_url}")
+                    self.log(f"实际请求的 info_url: {info_url}")
                     try:
                         resp = requests.post(info_url, headers=headers, json=body)
                         self.log(f"info接口响应状态码: {resp.status_code}")
