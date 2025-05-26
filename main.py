@@ -392,7 +392,7 @@ class KwaiTool:
                     self.log("检测是否存在'立即登录'按钮...")
                     login_button = None
                     try:
-                        login_button = page.wait_for_selector("button:has-text('立即登录')", timeout=3000)
+                        login_button = page.wait_for_selector("button:has-text('立即登录')", timeout=5000)
                     except:
                         pass
                     if not login_button:
@@ -413,7 +413,7 @@ class KwaiTool:
                     self.log("找到'立即登录'按钮，点击中...")
                     login_button.click()
                     self.log("已点击'立即登录'按钮")
-                    page.wait_for_timeout(1500)
+                    page.wait_for_timeout(2000)
 
                     # 3. 切换到验证码登录
                     self.log("查找'验证码登录'选项卡...")
@@ -482,7 +482,7 @@ class KwaiTool:
                     self.log("已点击登录按钮")
                     self.log("等待登录完成...")
                     try:
-                        page.wait_for_selector("div.tab.svelte-rlva34", state="hidden", timeout=20000)
+                        page.wait_for_selector("div.tab.svelte-rlva34", state="hidden", timeout=30000)
                         self.log("登录弹窗已消失，登录成功！")
                     except Exception as e:
                         self.log(f"等待登录完成时出错: {e}")
@@ -581,7 +581,7 @@ class KwaiTool:
                         account_url = f"https://niu.e.kuaishou.com/home?__accountId__={selected_account_id}&homeType=new"
                         self.log(f"跳转至对应账户页: {account_url}")
                         page.goto(account_url, wait_until="networkidle")
-                        page.wait_for_timeout(1500)
+                        page.wait_for_timeout(2000)
                         # 7. 获取新页面cookie
                         cookies = context.cookies()
                         if not cookies:
